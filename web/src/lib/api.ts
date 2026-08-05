@@ -1,19 +1,34 @@
 /**
- * Typed client for the Cadence FastAPI backend (api/routers/sessions.py).
+ * Typed client for the Cadence FastAPI backend (api/routers/*.py).
  * Base URL is env-configurable so the same build can point at a local
  * dev server or a deployed API.
  */
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+export interface UserOut {
+  id: string;
+  created_at: string;
+}
+
+export interface L1ProfileOut {
+  id: string;
+  user_id: string;
+  first_language: string;
+  self_declared_confidence: string;
+}
+
 export interface SessionOut {
   id: string;
+  user_id: string | null;
+  parent_session_id: string | null;
   scenario: string;
   status: string;
   created_at: string;
 }
 
 export interface FeedbackItemOut {
+  id: string;
   criterion: string;
   observation: string;
   rationale: string;
@@ -21,6 +36,7 @@ export interface FeedbackItemOut {
   evidence_text: string;
   evidence_start_ms: number;
   evidence_end_ms: number;
+  user_rating: boolean | null;
 }
 
 export interface DrillOut {
@@ -56,11 +72,39 @@ async function asJson<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export async function createSession(scenario: string): Promise<SessionOut> {
+export async function createUser(): Promise<UserOut> {
+  const res = await fetch(`${API_BASE}/users`, { method: "POST" });
+  return asJson<UserOut>(res);
+}
+
+export async function upsertL1Profile(
+  userId: string,
+  firstLanguage: string,
+  selfDeclaredConfidence: string,
+): Promise<L1ProfileOut> {
+  const res = await fetch(`${API_BASE}/users/${userId}/l1-profile`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      first_language: firstLanguage,
+      self_declared_confidence: selfDeclaredConfidence,
+    }),
+  });
+  return asJson<L1ProfileOut>(res);
+}
+
+export async function createSession(
+  scenario: string,
+  options?: { userId?: string; parentSessionId?: string },
+): Promise<SessionOut> {
   const res = await fetch(`${API_BASE}/sessions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ scenario }),
+    body: JSON.stringify({
+      scenario,
+      user_id: options?.userId ?? null,
+      parent_session_id: options?.parentSessionId ?? null,
+    }),
   });
   return asJson<SessionOut>(res);
 }
@@ -95,4 +139,16 @@ export async function getResult(sessionId: string): Promise<AnalysisResultOut> {
 
 export async function deleteSession(sessionId: string): Promise<void> {
   await fetch(`${API_BASE}/sessions/${sessionId}`, { method: "DELETE" });
+}
+
+export async function rateFeedbackItem(
+  feedbackItemId: string,
+  useful: boolean,
+): Promise<FeedbackItemOut> {
+  const res = await fetch(`${API_BASE}/feedback-items/${feedbackItemId}/rating`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ useful }),
+  });
+  return asJson<FeedbackItemOut>(res);
 }

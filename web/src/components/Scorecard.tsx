@@ -61,10 +61,12 @@ export function Scorecard({
   result,
   previous,
   onSeek,
+  onRate,
 }: {
   result: AnalysisResultOut;
   previous?: AnalysisResultOut;
   onSeek?: (ms: number) => void;
+  onRate?: (feedbackItemId: string, useful: boolean) => void;
 }) {
   const summary = summaryOf(result);
   const prevSummary = previous ? summaryOf(previous) : undefined;
@@ -112,8 +114,8 @@ export function Scorecard({
             No specific issues surfaced from this attempt.
           </p>
         )}
-        {result.feedback_items.map((item, i) => (
-          <div className="feedback-item" key={i}>
+        {result.feedback_items.map((item) => (
+          <div className="feedback-item" key={item.id}>
             <div className="criterion">{item.criterion.replace(/_/g, " ")}</div>
             <p>
               <strong>{item.observation}</strong> {item.rationale}
@@ -130,6 +132,34 @@ export function Scorecard({
                 </button>
               )}
             </p>
+            {onRate && (
+              <div className="row" style={{ marginTop: 4 }}>
+                <button
+                  className="btn"
+                  style={
+                    item.user_rating === true
+                      ? { borderColor: "var(--good)", color: "var(--good)" }
+                      : undefined
+                  }
+                  onClick={() => onRate(item.id, true)}
+                  aria-label="This feedback was useful"
+                >
+                  Useful
+                </button>
+                <button
+                  className="btn"
+                  style={
+                    item.user_rating === false
+                      ? { borderColor: "var(--danger)", color: "var(--danger)" }
+                      : undefined
+                  }
+                  onClick={() => onRate(item.id, false)}
+                  aria-label="This feedback was not useful"
+                >
+                  Not useful
+                </button>
+              </div>
+            )}
           </div>
         ))}
       </div>

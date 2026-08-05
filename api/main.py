@@ -9,7 +9,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.config import settings
 from api.db import init_db
+from api.routers.feedback import router as feedback_router
 from api.routers.sessions import router as sessions_router
+from api.routers.users import router as users_router
 
 
 @asynccontextmanager
@@ -31,6 +33,8 @@ app.add_middleware(
 )
 
 app.include_router(sessions_router)
+app.include_router(users_router)
+app.include_router(feedback_router)
 
 
 @app.get("/health")
