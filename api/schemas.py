@@ -161,3 +161,24 @@ class AttemptSummaryOut(BaseModel):
     filler_rate_per_100_words: float
     hedging_rate_per_100_words: float
     point_position_score: float
+
+
+class CreateCheckoutRequest(BaseModel):
+    tier: str  # "pro" | "event_sprint" — team is sold out of band
+
+
+class CheckoutSessionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    tier: str
+    status: str
+    url: str
+
+
+class SubscriptionOut(BaseModel):
+    tier: str  # the EFFECTIVE tier (event_sprint auto-reverts to free once expired)
+    status: str
+    current_period_end: datetime | None
+    analyses_this_month: int
+    analyses_limit: int | None  # None = unlimited

@@ -10,9 +10,12 @@ module's logic, only how it's invoked.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session as OrmSession
 
+from api.billing import count_analyses_this_month, effective_tier, quota_exceeded
 from api.config import settings
 from api.db import (
     AnalysisResult,
@@ -21,6 +24,7 @@ from api.db import (
     MediaAsset,
     MetricEventRow,
     PracticeSession,
+    Subscription,
     TranscriptCorrection,
     TranscriptWord,
     User,
@@ -224,6 +228,23 @@ def analyze_session(
     media = db.query(MediaAsset).filter_by(session_id=session_id).one_or_none()
     if media is None:
         raise HTTPException(status_code=400, detail="no media uploaded for this session")
+
+    # Quota (§4.1 M12, §8.1) only gates a NEW analysis, never re-analyzing
+    # a session that already has one (e.g. after a transcript correction)
+    # — that doesn't consume an additional monthly slot. Anonymous
+    # sessions (no user_id) aren't billed, so they're never gated.
+    is_first_analysis = db.query(AnalysisResult).filter_by(session_id=session_id).first() is None
+    if session.user_id and is_first_analysis:
+        now = datetime.now(timezone.utc)
+        subscription = db.query(Subscription).filter_by(user_id=session.user_id).one_or_none()
+        tier = effective_tier(subscription, now)
+        analyses_this_month = count_analyses_this_month(db, session.user_id, now)
+        if quota_exceeded(tier, analyses_this_month):
+            raise HTTPException(
+                status_code=402,
+                detail="free-tier monthly analysis limit reached — upgrade to Pro or an "
+                "Event Sprint pass for unlimited analyses",
+            )
 
     raw_audio = store.read(media.storage_key)
 

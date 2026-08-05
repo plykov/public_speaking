@@ -80,6 +80,21 @@ export interface StreakOut {
   last_practice_date: string | null;
 }
 
+export interface CheckoutSessionOut {
+  id: string;
+  tier: string;
+  status: string;
+  url: string;
+}
+
+export interface SubscriptionOut {
+  tier: string;
+  status: string;
+  current_period_end: string | null;
+  analyses_this_month: number;
+  analyses_limit: number | null;
+}
+
 export interface AttemptSummaryOut {
   session_id: string;
   parent_session_id: string | null;
@@ -246,4 +261,27 @@ export async function getReminder(userId: string): Promise<ReminderOut | null> {
 export async function getStreak(userId: string): Promise<StreakOut> {
   const res = await fetch(`${API_BASE}/users/${userId}/streak`);
   return asJson<StreakOut>(res);
+}
+
+/** §4.1 M12: no real Stripe here — see api/billing.py. "pro" | "event_sprint" only. */
+export async function createCheckout(userId: string, tier: string): Promise<CheckoutSessionOut> {
+  const res = await fetch(`${API_BASE}/users/${userId}/checkout`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tier }),
+  });
+  return asJson<CheckoutSessionOut>(res);
+}
+
+/** Dev-mode stand-in for a verified Stripe webhook firing after payment. */
+export async function confirmCheckout(checkoutSessionId: string): Promise<CheckoutSessionOut> {
+  const res = await fetch(`${API_BASE}/billing/checkout/${checkoutSessionId}/confirm`, {
+    method: "POST",
+  });
+  return asJson<CheckoutSessionOut>(res);
+}
+
+export async function getSubscription(userId: string): Promise<SubscriptionOut> {
+  const res = await fetch(`${API_BASE}/users/${userId}/subscription`);
+  return asJson<SubscriptionOut>(res);
 }

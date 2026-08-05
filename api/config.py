@@ -12,6 +12,7 @@ class Settings:
     storage_dir: str = os.environ.get("STORAGE_DIR", "./media_store")
     stt_provider: str = os.environ.get("STT_PROVIDER", "mock")
     llm_provider: str = os.environ.get("LLM_PROVIDER", "mock")
+    billing_provider: str = os.environ.get("BILLING_PROVIDER", "mock")
     rubric_version: str = os.environ.get("RUBRIC_VERSION", "rubric-v1")
     model_version: str = os.environ.get("MODEL_VERSION", "mock-llm-v1")
     cors_allow_origins: tuple[str, ...] = tuple(

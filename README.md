@@ -78,8 +78,10 @@ upload (chunked, resumable) → normalize → STT → deterministic metrics
 | `api.routers.users` | §4.1 M1, M9, M10, M11 | Onboarding (create user, upsert L1 profile), progress attempts, reminder + streak, account export and delete |
 | `api.routers.feedback` | §4.1 M6 | Thumbs up/down on a feedback item |
 | `api.routers.admin` | §6.5 | Raw-media retention purge (no scheduler in this environment — see below) |
+| `api.routers.billing` | §4.1 M12, §8.1 | Mock checkout, checkout confirmation, subscription status |
 | `api.lifecycle` | §4.1 M11, §6.5 | Shared delete/export/retention logic — one code path for both session-delete and account-delete, so neither can drift and delete less than the other |
 | `api.streaks` | §4.1 M10 | `compute_streak()` — pure function, no DB access, same "pure core" pattern as `metrics/` |
+| `api.billing` | §4.1 M12, §8.1 | Entitlement logic (`effective_tier()`, `quota_exceeded()`) plus the no-real-Stripe provider seam — same pattern as `api.pipeline.stt` / `api.pipeline.llm` |
 
 ### Data model (§6.4)
 
@@ -94,6 +96,8 @@ upload (chunked, resumable) → normalize → STT → deterministic metrics
 | `FeedbackItemRow` | `feedback_item` | Includes `user_rating` (nullable bool) for the M6 thumbs up/down |
 | `TranscriptCorrection` | — | Not a §6.4 entity — logs each M8 word-level correction (original/corrected text) with a snapshot of the speaker's L1 background, an ASR-quality-by-cohort signal per §6.6. Deleted along with its session (privacy over long-term analytics — see below) |
 | `Reminder` | `reminder` | Days + time-of-day preference for the M10 habit layer. Storing the preference is the whole scope — see below |
+| `Subscription` | `subscription` | Tier/status/period-end for M12 billing — see below. A user with no row (or an expired `event_sprint`) is free-tier by construction, computed in `api.billing.effective_tier()`, never trusted from `.tier` alone |
+| `CheckoutSession` | — | Not a §6.4 entity — a pending mock checkout, resolved by the confirm endpoint standing in for a Stripe webhook |
 | `AnalysisResult` | — | Not a §6.4 entity — a per-attempt stamp of `rubric_version`/`model_version`, the computed metrics summary (kept as JSON: it's a derived aggregate, not a core entity), and a snapshot of the recommended drill |
 
 Re-analyzing a session (`POST /sessions/{id}/analyze` called again) replaces
@@ -106,8 +110,8 @@ plain string — no admin CRUD for scenarios was in scope),
 `rubric_version` as a table (the rubric is code-defined in
 `api/pipeline/llm.py`, not database-editable), `skill_trend` (§4.1 M9 —
 `GET /users/{id}/attempts` computes trends from `AnalysisResult` on
-read rather than maintaining a separate rolled-up table), `subscription`
-(§4.1 M12, Billing) — none of those were part of the work this covers.
+read rather than maintaining a separate rolled-up table) — not part of
+the work this covers.
 
 ### Habit layer (§4.1 M10)
 
@@ -125,6 +129,32 @@ preference; a real send is a follow-up. The streak is self-relative,
 like Progress (§4.1 M9) — no comparison to other users, and "freeze"
 means exactly one skipped day per contiguous run doesn't reset the
 count, not an unlimited grace period.
+
+### Billing (§4.1 M12, §8.1)
+
+| Endpoint | Behavior |
+|---|---|
+| `POST /users/{id}/checkout` | `{"tier": "pro" \| "event_sprint"}` — creates a pending mock checkout, returns a fake `mock://checkout/{id}` URL. `team` is rejected: sold out of band, not self-serve |
+| `POST /billing/checkout/{id}/confirm` | Dev-mode stand-in for a verified Stripe webhook firing after payment. Idempotent — confirming twice is a no-op the second time |
+| `GET /users/{id}/subscription` | The *effective* tier (never trust a raw `.tier` — an expired `event_sprint` silently reverts), plus this month's analysis count and limit |
+
+No real payment processing exists, and no Stripe key belongs in this
+repo — same seam pattern as `api.pipeline.stt` / `api.pipeline.llm`:
+`BillingProvider` is the interface, `MockBillingProvider` the dev
+implementation, `get_billing_provider()` the factory a real
+`StripeBillingProvider` would plug into via `BILLING_PROVIDER=stripe`.
+
+Entitlement gating lives in `POST /sessions/{id}/analyze`: **free tier
+is capped at 3 analyses/month** (§8.1), enforced only on a session's
+*first* analysis — re-analyzing after a transcript correction never
+consumes a second slot, and anonymous sessions (no `user_id`) are never
+gated, matching the no-card free tier already being the default.
+Exceeding the cap returns `402 Payment Required` with a message
+pointing at Pro/Event Sprint. `pro` and `team` are unlimited and
+non-expiring; `event_sprint` is unlimited for a rolling 30 days from
+confirmation, then reverts to free automatically — there's no
+"downgrade" event to handle, just `effective_tier()` recomputing on
+every read.
 
 ### Privacy controls (§4.1 M11, §6.5)
 
@@ -271,6 +301,14 @@ backend above.
   — verified live that the choice persists across a page reload.
   `src/components/StreakBadge.tsx` on `/progress` shows the current/
   longest non-punitive streak from `GET /users/{id}/streak`.
+- **Billing** (`src/components/BillingSettings.tsx`, §4.1 M12): shows
+  the current plan and, on free tier, this month's analysis count
+  against the limit. "Upgrade" buttons are explicitly labelled mock —
+  there's no hosted Stripe checkout page to redirect to, so upgrading
+  creates and immediately confirms a mock checkout. `PracticeStudio`
+  catches a `402` from `/analyze` and shows an upgrade prompt instead of
+  a generic error — verified live end to end (free tier shows "1/3
+  analyses used," upgrading to Pro removes the counter entirely).
 - A four-link nav bar (Home/Practice/Progress/Settings) ties the pages
   together (`src/components/NavBar.tsx`).
 
@@ -296,9 +334,13 @@ onboarding is there to attach an L1 profile, not gate access.
 ## What's still out of scope
 
 Auth (the `User` table is anonymous/device-scoped, not a login system),
-Stripe billing, a real STT/LLM vendor integration, calendar integration,
-and everything in Phase 2/3 of the roadmap. See "Deliberately not
-modeled" above for the schema entities this migration didn't build.
+a real Stripe/STT/LLM vendor integration (all three follow the same
+provider-seam-plus-mock pattern), calendar integration, and everything
+in Phase 2/3 of the roadmap. That completes every §4.1 MVP checklist
+item (M1-M12) at the mock/seam level this environment allows — going
+further means real vendor credentials (Stripe, AssemblyAI/Deepgram, a
+frontier LLM) and infra (a task queue, a scheduler, a notification
+channel) this environment doesn't have.
 
 ## Testing
 
@@ -310,4 +352,4 @@ pytest --cov=metrics --cov=api --cov-report=term-missing
 cd web && npx tsc --noEmit && npm run lint && npm run build
 ```
 
-126 backend tests, 98% line coverage as of this commit.
+153 backend tests, 99% line coverage as of this commit.

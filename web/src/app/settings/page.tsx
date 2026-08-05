@@ -6,6 +6,7 @@ import Link from "next/link";
 import { deleteAccount, exportUserData } from "@/lib/api";
 import { clearStoredUserId, getStoredUserId } from "@/lib/localUser";
 import { ReminderSettings } from "@/components/ReminderSettings";
+import { BillingSettings } from "@/components/BillingSettings";
 
 export default function Settings() {
   const router = useRouter();
@@ -88,6 +89,8 @@ export default function Settings() {
           days; your derived metrics and feedback history stay so your progress is never lost.
         </p>
       </div>
+
+      <BillingSettings userId={userId} />
 
       <ReminderSettings userId={userId} />
 

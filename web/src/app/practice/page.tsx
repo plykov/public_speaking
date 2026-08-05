@@ -2,6 +2,7 @@
 
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { RecorderPanel } from "@/components/RecorderPanel";
 import { DevTranscriptPicker } from "@/components/DevTranscriptPicker";
 import { Scorecard } from "@/components/Scorecard";
@@ -58,11 +59,13 @@ function PracticeStudioInner() {
   const [retryResult, setRetryResult] = useState<AnalysisResultOut | null>(null);
   const [recordedUrl, setRecordedUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [quotaExceeded, setQuotaExceeded] = useState(false);
 
   async function handleBaselineComplete(audioUrl: string) {
     setRecordedUrl(audioUrl);
     setStep("baseline-analyzing");
     setError(null);
+    setQuotaExceeded(false);
     try {
       const result = await runAnalysis(context.id, transcriptId, {
         userId: getStoredUserId() ?? undefined,
@@ -70,7 +73,11 @@ function PracticeStudioInner() {
       setBaselineResult(result);
       setStep("baseline-result");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "analysis failed");
+      if (err instanceof Error && err.message.startsWith("402")) {
+        setQuotaExceeded(true);
+      } else {
+        setError(err instanceof Error ? err.message : "analysis failed");
+      }
       setStep("baseline-record");
     }
   }
@@ -79,6 +86,7 @@ function PracticeStudioInner() {
     setRecordedUrl(audioUrl);
     setStep("retry-analyzing");
     setError(null);
+    setQuotaExceeded(false);
     try {
       const result = await runAnalysis(context.id, transcriptId, {
         userId: getStoredUserId() ?? undefined,
@@ -87,7 +95,11 @@ function PracticeStudioInner() {
       setRetryResult(result);
       setStep("retry-result");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "analysis failed");
+      if (err instanceof Error && err.message.startsWith("402")) {
+        setQuotaExceeded(true);
+      } else {
+        setError(err instanceof Error ? err.message : "analysis failed");
+      }
       setStep("drill-record");
     }
   }
@@ -107,6 +119,18 @@ function PracticeStudioInner() {
       <h1>Practice Studio</h1>
 
       {error && <p className="error-banner">{error}</p>}
+
+      {quotaExceeded && (
+        <div className="dev-banner stack">
+          <div>
+            You&apos;ve used your 3 free analyses this month. Upgrade to Pro for unlimited
+            analyses, or grab an Event Sprint pass for 30 days of unlimited access.
+          </div>
+          <Link href="/settings" className="btn btn-primary" style={{ width: "fit-content" }}>
+            See upgrade options
+          </Link>
+        </div>
+      )}
 
       {step === "context" && (
         <div className="card stack">
