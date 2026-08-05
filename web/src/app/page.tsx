@@ -8,7 +8,7 @@ export default function Home() {
         Be heard in English meetings. Practice the meeting-fluency skills nobody else
         teaches: interjection, hedging, point-first structure.
       </p>
-      <Link href="/practice" className="btn btn-primary" style={{ width: "fit-content" }}>
+      <Link href="/onboarding" className="btn btn-primary" style={{ width: "fit-content" }}>
         Start a practice session
       </Link>
     </div>

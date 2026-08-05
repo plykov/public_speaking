@@ -73,8 +73,36 @@ upload (chunked, resumable) → normalize → STT → deterministic metrics
 | `api.pipeline.evidence` | §6.3 step 7 | Rejects any feedback item whose quoted evidence span isn't verbatim in the transcript at the claimed timestamps — "never surface an unverifiable claim" |
 | `api.pipeline.drills` | §4.1 M7 | Picks one repair drill targeting the top surviving feedback item |
 | `api.pipeline.orchestrator` | §6.3 | `run_pipeline()` — the single function a worker (Celery/Arq in production) would call |
-| `api.db` | §6.4 (simplified) | SQLAlchemy models: `PracticeSession`, `MediaAsset`, `AnalysisResult` (versioned by `rubric_version`/`model_version`, §6.4) |
+| `api.db` | §6.4 | Normalized SQLAlchemy models — see the schema table below |
 | `api.routers.sessions` | — | HTTP surface: create session, chunked upload, analyze, fetch result, one-click delete (§4.1 M11) |
+| `api.routers.users` | §4.1 M1 | Onboarding: create an anonymous user, upsert their L1 profile |
+| `api.routers.feedback` | §4.1 M6 | Thumbs up/down on a feedback item |
+
+### Data model (§6.4)
+
+| Table | §6.4 entity | Notes |
+|---|---|---|
+| `User` | `user` | Anonymous, device-scoped — no email/password. Auth is explicitly out of scope; the client holds the id (localStorage) |
+| `L1Profile` | `l1_profile` | First language + self-declared confidence. Read only by onboarding copy and the dev-mode sample-transcript picker — **never** by `api/pipeline/llm.py` or `metrics/report.py` |
+| `PracticeSession` | `session` | Adds `user_id` and a self-referencing `parent_session_id` — a retry session points at the baseline it followed, which is §6.4's `attempt_link` relationship without a separate join table |
+| `MediaAsset` | `media_asset` | Unchanged — storage key only, never the audio bytes |
+| `TranscriptWord` | `transcript_segment` | Word-level: text, start/end ms, confidence, sequence index |
+| `MetricEventRow` | `metric_event` | Every timestamped instance from the deterministic metrics module |
+| `FeedbackItemRow` | `feedback_item` | Includes `user_rating` (nullable bool) for the M6 thumbs up/down |
+| `AnalysisResult` | — | Not a §6.4 entity — a per-attempt stamp of `rubric_version`/`model_version`, the computed metrics summary (kept as JSON: it's a derived aggregate, not a core entity), and a snapshot of the recommended drill |
+
+Re-analyzing a session (`POST /sessions/{id}/analyze` called again) replaces
+that session's `TranscriptWord` / `MetricEventRow` / `FeedbackItemRow` /
+`AnalysisResult` rows rather than appending — a session has one current
+attempt's worth of derived data, not a growing pile of them.
+
+**Deliberately not modeled**: `goal`, `scenario` as a table (kept as a
+plain string — no admin CRUD for scenarios was in scope),
+`rubric_version` as a table (the rubric is code-defined in
+`api/pipeline/llm.py`, not database-editable), `skill_trend` (§4.1 M9,
+Progress), `reminder` (§4.1 M10, Habit layer), `subscription` (§4.1
+M12, Billing) — none of those were part of the schema/onboarding work
+this covers.
 
 ### Running
 
@@ -100,11 +128,6 @@ pipeline run without a real STT vendor; point `STT_PROVIDER` /
 
 ### Known simplifications, stated rather than hidden
 
-- `AnalysisResult` stores transcript/metrics/feedback as JSON columns
-  rather than the fully normalized `transcript_segment` / `metric_event`
-  / `feedback_item` / `drill` tables in §6.4 — normalizing that schema is
-  a separate scope item, not required for the pipeline to function or be
-  tested.
 - `/analyze` runs the pipeline synchronously in-request. Production
   moves steps 3-8 into a Celery/Arq worker (§6.1); `run_pipeline()` is
   already the exact function such a worker task would call, so this is
@@ -150,9 +173,21 @@ backend above.
   it's just not what gets analyzed yet. This is labelled in the UI,
   not hidden, and is the one seam to remove once a real STT provider
   is wired into `api/pipeline/stt.py`.
-- Flow implemented: context select → baseline recording → scorecard
-  (one strength, up to three evidence-linked priorities, one drill) →
-  retry the drill → before/after delta (`src/app/practice/page.tsx`).
+- **Onboarding** (`src/app/onboarding/page.tsx`, §4.1 M1): pick a
+  context, optionally give a first language + self-declared English
+  confidence ("this only shapes onboarding copy — it's never used to
+  score your recordings," stated in the UI, not just this README). This
+  `POST /users` + `PUT /users/{id}/l1-profile`, stores the returned user
+  id in `localStorage` (`src/lib/localUser.ts`), and hands off into the
+  same baseline-recording flow with the context preselected via a query
+  param — no duplicate context picker.
+- Flow implemented: onboarding → baseline recording → scorecard (one
+  strength, up to three evidence-linked priorities each with a
+  useful/not-useful rating, one drill) → retry the drill → before/after
+  delta (`src/app/practice/page.tsx`). A retry session is created with
+  `parent_session_id` pointing at the baseline session, so the
+  `attempt_link` relationship in the schema above is populated by real
+  usage, not just backfilled.
 
 ### Running
 
@@ -166,14 +201,19 @@ cd web
 cp env.example .env.local   # NEXT_PUBLIC_API_URL, defaults to localhost:8000
 npm install
 npm run dev
-# → http://localhost:3000/practice
+# → http://localhost:3000/onboarding
 ```
+
+`/practice` also works directly without onboarding first — session
+creation's `user_id` is optional, matching the no-card free tier (§8.1);
+onboarding is there to attach an L1 profile, not gate access.
 
 ## What's still out of scope
 
-Auth, Stripe billing, a real STT/LLM vendor integration, the fully
-normalized §6.4 schema, calendar integration, and everything in
-Phase 2/3 of the roadmap.
+Auth (the `User` table is anonymous/device-scoped, not a login system),
+Stripe billing, a real STT/LLM vendor integration, calendar integration,
+and everything in Phase 2/3 of the roadmap. See "Deliberately not
+modeled" above for the schema entities this migration didn't build.
 
 ## Testing
 
@@ -185,4 +225,4 @@ pytest --cov=metrics --cov=api --cov-report=term-missing
 cd web && npx tsc --noEmit && npm run lint && npm run build
 ```
 
-67 tests, 97% line coverage as of this commit.
+84 backend tests, 98% line coverage as of this commit.

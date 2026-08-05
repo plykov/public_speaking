@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from metrics.models import MetricsReport
+from metrics.models import MetricsReport, Word
 from metrics.report import compute_metrics
 from metrics.text_utils import split_sentences
 
@@ -27,6 +27,7 @@ from api.pipeline.stt import STTProvider
 
 @dataclass(frozen=True)
 class PipelineResult:
+    words: tuple[Word, ...]
     transcript_text: str
     metrics: MetricsReport
     feedback_items: tuple[FeedbackItemDraft, ...]
@@ -59,6 +60,7 @@ def run_pipeline(
     drill = recommend_drill(accepted)
 
     return PipelineResult(
+        words=tuple(words),
         transcript_text=" ".join(w.text for w in words),
         metrics=metrics_report,
         feedback_items=tuple(accepted[:3]),  # §4.1 M6: maximum three priorities

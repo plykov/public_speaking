@@ -1,12 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { RecorderPanel } from "@/components/RecorderPanel";
 import { DevTranscriptPicker } from "@/components/DevTranscriptPicker";
 import { Scorecard } from "@/components/Scorecard";
-import { createSession, analyzeSession, type AnalysisResultOut } from "@/lib/api";
+import { createSession, analyzeSession, rateFeedbackItem, type AnalysisResultOut } from "@/lib/api";
 import { uploadBlobChunked } from "@/lib/chunkedUpload";
 import { SAMPLE_TRANSCRIPTS } from "@/lib/sampleTranscripts";
+import { CONTEXTS } from "@/lib/contexts";
+import { getStoredUserId } from "@/lib/localUser";
 
 type Step =
   | "context"
@@ -17,24 +20,38 @@ type Step =
   | "retry-analyzing"
   | "retry-result";
 
-const CONTEXTS = [
-  { id: "recurring_meetings", label: "Recurring meetings", prompt: "You're in a status standup. Give a 30-second update on your team's biggest risk this week, and what you recommend doing about it." },
-  { id: "presentation", label: "Presentation", prompt: "Open a five-minute update to leadership. In one sentence, what's the headline they should walk away with?" },
-  { id: "interview", label: "Interview", prompt: "You're asked: \"Tell me about a time you disagreed with a decision.\" Answer in under 90 seconds, recommendation first." },
-  { id: "difficult_conversation", label: "Difficult conversation", prompt: "You need to tell a stakeholder their requested deadline isn't realistic. Open with what you'd actually say." },
-];
-
-async function runAnalysis(scenario: string, transcriptId: string): Promise<AnalysisResultOut> {
+async function runAnalysis(
+  scenario: string,
+  transcriptId: string,
+  options: { userId?: string; parentSessionId?: string },
+): Promise<AnalysisResultOut> {
   const sample = SAMPLE_TRANSCRIPTS.find((t) => t.id === transcriptId) ?? SAMPLE_TRANSCRIPTS[0];
-  const session = await createSession(scenario);
+  const session = await createSession(scenario, options);
   const blob = new Blob([JSON.stringify(sample.words)], { type: "application/json" });
   await uploadBlobChunked(session.id, blob);
   return analyzeSession(session.id);
 }
 
-export default function PracticeStudio() {
-  const [step, setStep] = useState<Step>("context");
-  const [context, setContext] = useState(CONTEXTS[0]);
+function applyRating(
+  result: AnalysisResultOut,
+  feedbackItemId: string,
+  useful: boolean,
+): AnalysisResultOut {
+  return {
+    ...result,
+    feedback_items: result.feedback_items.map((item) =>
+      item.id === feedbackItemId ? { ...item, user_rating: useful } : item,
+    ),
+  };
+}
+
+function PracticeStudioInner() {
+  const searchParams = useSearchParams();
+  const preselectedContextId = searchParams.get("context");
+  const preselectedContext = CONTEXTS.find((c) => c.id === preselectedContextId);
+
+  const [step, setStep] = useState<Step>(preselectedContext ? "baseline-record" : "context");
+  const [context, setContext] = useState(preselectedContext ?? CONTEXTS[0]);
   const [transcriptId, setTranscriptId] = useState(SAMPLE_TRANSCRIPTS[0].id);
   const [baselineResult, setBaselineResult] = useState<AnalysisResultOut | null>(null);
   const [retryResult, setRetryResult] = useState<AnalysisResultOut | null>(null);
@@ -46,7 +63,9 @@ export default function PracticeStudio() {
     setStep("baseline-analyzing");
     setError(null);
     try {
-      const result = await runAnalysis(context.id, transcriptId);
+      const result = await runAnalysis(context.id, transcriptId, {
+        userId: getStoredUserId() ?? undefined,
+      });
       setBaselineResult(result);
       setStep("baseline-result");
     } catch (err) {
@@ -60,12 +79,25 @@ export default function PracticeStudio() {
     setStep("retry-analyzing");
     setError(null);
     try {
-      const result = await runAnalysis(context.id, transcriptId);
+      const result = await runAnalysis(context.id, transcriptId, {
+        userId: getStoredUserId() ?? undefined,
+        parentSessionId: baselineResult?.session_id,
+      });
       setRetryResult(result);
       setStep("retry-result");
     } catch (err) {
       setError(err instanceof Error ? err.message : "analysis failed");
       setStep("drill-record");
+    }
+  }
+
+  async function handleRate(target: "baseline" | "retry", feedbackItemId: string, useful: boolean) {
+    const setter = target === "baseline" ? setBaselineResult : setRetryResult;
+    setter((prev) => (prev ? applyRating(prev, feedbackItemId, useful) : prev));
+    try {
+      await rateFeedbackItem(feedbackItemId, useful);
+    } catch {
+      // Non-critical — the optimistic update stays even if the PUT fails silently.
     }
   }
 
@@ -108,7 +140,10 @@ export default function PracticeStudio() {
       {step === "baseline-result" && baselineResult && (
         <div className="stack">
           {recordedUrl && <audio controls src={recordedUrl} style={{ width: "100%" }} />}
-          <Scorecard result={baselineResult} />
+          <Scorecard
+            result={baselineResult}
+            onRate={(id, useful) => handleRate("baseline", id, useful)}
+          />
           <button className="btn btn-primary" onClick={() => setStep("drill-record")}>
             Try the drill: {baselineResult.drill.title}
           </button>
@@ -128,7 +163,11 @@ export default function PracticeStudio() {
         <div className="stack">
           {recordedUrl && <audio controls src={recordedUrl} style={{ width: "100%" }} />}
           <p className="pill">Before / after</p>
-          <Scorecard result={retryResult} previous={baselineResult} />
+          <Scorecard
+            result={retryResult}
+            previous={baselineResult}
+            onRate={(id, useful) => handleRate("retry", id, useful)}
+          />
           <button
             className="btn"
             onClick={() => {
@@ -143,5 +182,13 @@ export default function PracticeStudio() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function PracticeStudio() {
+  return (
+    <Suspense fallback={<div className="container">Loading…</div>}>
+      <PracticeStudioInner />
+    </Suspense>
   );
 }
