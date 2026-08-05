@@ -17,9 +17,11 @@ from api.config import settings
 from api.db import (
     AnalysisResult,
     FeedbackItemRow,
+    L1Profile,
     MediaAsset,
     MetricEventRow,
     PracticeSession,
+    TranscriptCorrection,
     TranscriptWord,
     User,
     get_db,
@@ -27,16 +29,19 @@ from api.db import (
 from api.deps import get_llm, get_normalizer, get_object_store, get_stt
 from api.lifecycle import delete_session_data
 from api.pipeline.llm import ScenarioRubric
-from api.pipeline.orchestrator import run_pipeline
+from api.pipeline.orchestrator import PipelineResult, run_pipeline, score_words
 from api.schemas import (
     AnalysisResultOut,
     CreateSessionRequest,
     DrillOut,
     FeedbackItemOut,
     SessionOut,
+    TranscriptWordOut,
+    UpdateTranscriptRequest,
     UploadChunkResponse,
 )
 from api.storage import ObjectStore, UploadConflict
+from metrics.models import Word
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -159,6 +164,56 @@ def _build_result_out(db: OrmSession, analysis: AnalysisResult) -> AnalysisResul
     )
 
 
+def _persist_scoring(db: OrmSession, session: PracticeSession, result: PipelineResult) -> AnalysisResult:
+    """Replace this session's metric_events/feedback_items/analysis_result
+    (never appends — one attempt's derived data at a time). Does not touch
+    `TranscriptWord`: callers write the transcript themselves, since a
+    first-pass analysis inserts new rows while a transcript correction
+    (§4.1 M8) updates existing ones in place."""
+    db.query(MetricEventRow).filter_by(session_id=session.id).delete()
+    db.query(FeedbackItemRow).filter_by(session_id=session.id).delete()
+    db.query(AnalysisResult).filter_by(session_id=session.id).delete()
+
+    db.add_all(
+        MetricEventRow(
+            session_id=session.id,
+            type=e.type,
+            start_ms=e.start_ms,
+            end_ms=e.end_ms,
+            value=e.value,
+        )
+        for e in result.metrics.events
+    )
+    db.add_all(
+        FeedbackItemRow(
+            session_id=session.id,
+            rank=i,
+            criterion=item.criterion,
+            observation=item.observation,
+            rationale=item.rationale,
+            repair=item.repair,
+            evidence_text=item.evidence_text,
+            evidence_start_ms=item.evidence_start_ms,
+            evidence_end_ms=item.evidence_end_ms,
+        )
+        for i, item in enumerate(result.feedback_items)
+    )
+    analysis = AnalysisResult(
+        session_id=session.id,
+        rubric_version=result.rubric_version,
+        model_version=result.model_version,
+        metrics_summary=result.metrics.summary,
+        drill_id=result.drill.id,
+        drill_title=result.drill.title,
+        drill_prompt=result.drill.prompt,
+        drill_duration_minutes=result.drill.duration_minutes,
+        drill_targets_criterion=result.drill.targets_criterion,
+    )
+    db.add(analysis)
+    session.status = "complete"
+    return analysis
+
+
 @router.post("/{session_id}/analyze", response_model=AnalysisResultOut)
 def analyze_session(
     session_id: str,
@@ -190,13 +245,9 @@ def analyze_session(
         db.commit()
         raise HTTPException(status_code=500, detail="analysis failed") from exc
 
-    # Wipe any prior attempt's rows for this session (re-analysis is a
-    # replace, not an append) before writing the normalized entities.
+    # Wipe any prior attempt's transcript for this session (re-analysis is
+    # a replace, not an append) before writing the fresh transcription.
     db.query(TranscriptWord).filter_by(session_id=session_id).delete()
-    db.query(MetricEventRow).filter_by(session_id=session_id).delete()
-    db.query(FeedbackItemRow).filter_by(session_id=session_id).delete()
-    db.query(AnalysisResult).filter_by(session_id=session_id).delete()
-
     db.add_all(
         TranscriptWord(
             session_id=session_id,
@@ -208,43 +259,8 @@ def analyze_session(
         )
         for i, w in enumerate(result.words)
     )
-    db.add_all(
-        MetricEventRow(
-            session_id=session_id,
-            type=e.type,
-            start_ms=e.start_ms,
-            end_ms=e.end_ms,
-            value=e.value,
-        )
-        for e in result.metrics.events
-    )
-    db.add_all(
-        FeedbackItemRow(
-            session_id=session_id,
-            rank=i,
-            criterion=item.criterion,
-            observation=item.observation,
-            rationale=item.rationale,
-            repair=item.repair,
-            evidence_text=item.evidence_text,
-            evidence_start_ms=item.evidence_start_ms,
-            evidence_end_ms=item.evidence_end_ms,
-        )
-        for i, item in enumerate(result.feedback_items)
-    )
-    analysis = AnalysisResult(
-        session_id=session_id,
-        rubric_version=result.rubric_version,
-        model_version=result.model_version,
-        metrics_summary=result.metrics.summary,
-        drill_id=result.drill.id,
-        drill_title=result.drill.title,
-        drill_prompt=result.drill.prompt,
-        drill_duration_minutes=result.drill.duration_minutes,
-        drill_targets_criterion=result.drill.targets_criterion,
-    )
-    db.add(analysis)
-    session.status = "complete"
+
+    analysis = _persist_scoring(db, session, result)
     db.commit()
     db.refresh(analysis)
 
@@ -257,6 +273,87 @@ def get_result(session_id: str, db: OrmSession = Depends(get_db)) -> AnalysisRes
     analysis = db.query(AnalysisResult).filter_by(session_id=session_id).one_or_none()
     if analysis is None:
         raise HTTPException(status_code=404, detail="no analysis for this session yet")
+    return _build_result_out(db, analysis)
+
+
+@router.get("/{session_id}/transcript", response_model=list[TranscriptWordOut])
+def get_transcript(session_id: str, db: OrmSession = Depends(get_db)) -> list[TranscriptWord]:
+    """§4.1 M8: the editable word list. Empty until the session has been analyzed."""
+    _get_session_or_404(session_id, db)
+    return (
+        db.query(TranscriptWord)
+        .filter_by(session_id=session_id)
+        .order_by(TranscriptWord.seq_index)
+        .all()
+    )
+
+
+@router.put("/{session_id}/transcript", response_model=AnalysisResultOut)
+def update_transcript(
+    session_id: str, body: UpdateTranscriptRequest, db: OrmSession = Depends(get_db)
+) -> AnalysisResultOut:
+    """§4.1 M8: correct ASR errors and re-run scoring on the corrected text.
+
+    Every changed word is logged as a `TranscriptCorrection` — an ASR
+    quality signal per L1 background (§6.6) — before re-scoring. Only the
+    words themselves are user-editable; timestamps and confidence are
+    carried over unchanged from the original transcription, so evidence
+    spans in the new feedback stay anchored to real audio positions.
+    """
+    session = _get_session_or_404(session_id, db)
+    existing = (
+        db.query(TranscriptWord)
+        .filter_by(session_id=session_id)
+        .order_by(TranscriptWord.seq_index)
+        .all()
+    )
+    if not existing:
+        raise HTTPException(status_code=400, detail="session has no transcript yet")
+    if len(body.words) != len(existing):
+        raise HTTPException(
+            status_code=400,
+            detail=f"expected {len(existing)} words, got {len(body.words)} — "
+            "corrections must match the original word count",
+        )
+
+    l1_first_language = None
+    if session.user_id:
+        profile = db.query(L1Profile).filter_by(user_id=session.user_id).one_or_none()
+        if profile:
+            l1_first_language = profile.first_language
+
+    corrected_words: list[Word] = []
+    for row, corrected_text in zip(existing, body.words):
+        if corrected_text != row.text:
+            db.add(
+                TranscriptCorrection(
+                    session_id=session_id,
+                    seq_index=row.seq_index,
+                    original_text=row.text,
+                    corrected_text=corrected_text,
+                    l1_first_language=l1_first_language,
+                )
+            )
+            row.text = corrected_text
+        corrected_words.append(
+            Word(
+                text=row.text,
+                start_ms=row.start_ms,
+                end_ms=row.end_ms,
+                confidence=row.confidence,
+            )
+        )
+
+    result = score_words(
+        corrected_words,
+        llm_provider=get_llm(),
+        rubric=ScenarioRubric(id=session.scenario),
+        rubric_version=settings.rubric_version,
+    )
+    analysis = _persist_scoring(db, session, result)
+    db.commit()
+    db.refresh(analysis)
+
     return _build_result_out(db, analysis)
 
 

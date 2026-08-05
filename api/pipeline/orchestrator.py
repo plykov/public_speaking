@@ -8,6 +8,11 @@ and the deterministic-metrics call never touches a model.
 
 In production, steps 3-8 run in a Celery/Arq worker off the request
 path (§6.1); this function is what that worker task calls.
+
+`score_words` factors out steps 5-9 (everything after transcription) so
+§4.1 M8's editable transcript can re-run metrics/rubric/evidence/drill
+on a user-corrected word list without re-invoking STT — a correction is
+scored the same way a first-pass transcript is, never treated specially.
 """
 
 from __future__ import annotations
@@ -37,18 +42,14 @@ class PipelineResult:
     model_version: str
 
 
-def run_pipeline(
-    raw_audio: bytes,
+def score_words(
+    words: list[Word],
     *,
-    normalizer: AudioNormalizer,
-    stt_provider: STTProvider,
     llm_provider: LLMRubricProvider,
     rubric: ScenarioRubric,
     rubric_version: str,
 ) -> PipelineResult:
-    normalized = normalizer.normalize(raw_audio)
-
-    words = stt_provider.transcribe(normalized.pcm, normalized.sample_rate)
+    """Steps 5-9: deterministic metrics → LLM rubric → evidence → drill."""
     sentences = split_sentences(words)
 
     metrics_report = compute_metrics(words)
@@ -68,4 +69,20 @@ def run_pipeline(
         drill=drill,
         rubric_version=rubric_version,
         model_version=llm_result.model_version,
+    )
+
+
+def run_pipeline(
+    raw_audio: bytes,
+    *,
+    normalizer: AudioNormalizer,
+    stt_provider: STTProvider,
+    llm_provider: LLMRubricProvider,
+    rubric: ScenarioRubric,
+    rubric_version: str,
+) -> PipelineResult:
+    normalized = normalizer.normalize(raw_audio)
+    words = stt_provider.transcribe(normalized.pcm, normalized.sample_rate)
+    return score_words(
+        words, llm_provider=llm_provider, rubric=rubric, rubric_version=rubric_version
     )
