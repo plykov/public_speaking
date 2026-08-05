@@ -84,3 +84,17 @@ class AnalysisResultOut(BaseModel):
     feedback_items: list[FeedbackItemOut]
     drill: DrillOut
     created_at: datetime
+
+
+class AttemptSummaryOut(BaseModel):
+    """One row of §4.1 M9 progress data — self-relative only, no ranking
+    against other users' attempts."""
+
+    session_id: str
+    parent_session_id: str | None
+    scenario: str
+    created_at: datetime
+    wpm_overall: float
+    filler_rate_per_100_words: float
+    hedging_rate_per_100_words: float
+    point_position_score: float

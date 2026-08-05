@@ -58,6 +58,17 @@ export interface AnalysisResultOut {
   created_at: string;
 }
 
+export interface AttemptSummaryOut {
+  session_id: string;
+  parent_session_id: string | null;
+  scenario: string;
+  created_at: string;
+  wpm_overall: number;
+  filler_rate_per_100_words: number;
+  hedging_rate_per_100_words: number;
+  point_position_score: number;
+}
+
 async function asJson<T>(res: Response): Promise<T> {
   if (!res.ok) {
     let detail = res.statusText;
@@ -151,4 +162,9 @@ export async function rateFeedbackItem(
     body: JSON.stringify({ useful }),
   });
   return asJson<FeedbackItemOut>(res);
+}
+
+export async function getAttempts(userId: string): Promise<AttemptSummaryOut[]> {
+  const res = await fetch(`${API_BASE}/users/${userId}/attempts`);
+  return asJson<AttemptSummaryOut[]>(res);
 }

@@ -188,6 +188,13 @@ backend above.
   `parent_session_id` pointing at the baseline session, so the
   `attempt_link` relationship in the schema above is populated by real
   usage, not just backfilled.
+- **Progress** (`src/app/progress/page.tsx`, §4.1 M9): first attempt vs.
+  best attempt vs. latest attempt, per metric, plus a full attempt
+  history — pulled from `GET /users/{id}/attempts`. Self-relative only,
+  by design: no percentile ranking against other users, matching the
+  scope doc's stated reasoning that such scores are "proxies with
+  contested validity" (§2.3). A three-link nav bar (Home/Practice/Progress)
+  ties the pages together (`src/components/NavBar.tsx`).
 
 ### Running
 
@@ -225,4 +232,4 @@ pytest --cov=metrics --cov=api --cov-report=term-missing
 cd web && npx tsc --noEmit && npm run lint && npm run build
 ```
 
-84 backend tests, 98% line coverage as of this commit.
+90 backend tests, 99% line coverage as of this commit.
