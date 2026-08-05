@@ -217,3 +217,39 @@ class PushTestResult(BaseModel):
     sent: int
     failed: int
     removed_stale: int
+
+
+class SlideDeckOut(BaseModel):
+    filename: str
+    page_count: int
+    thumbnail_urls: list[str]  # index-ordered, one per page
+
+
+class SlideTransitionIn(BaseModel):
+    slide_index: int
+    timestamp_ms: int
+
+    @field_validator("slide_index")
+    @classmethod
+    def _non_negative_index(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("slide_index must be >= 0")
+        return value
+
+    @field_validator("timestamp_ms")
+    @classmethod
+    def _non_negative_timestamp(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("timestamp_ms must be >= 0")
+        return value
+
+
+class UpsertSlideTransitionsRequest(BaseModel):
+    transitions: list[SlideTransitionIn]
+
+
+class SlideTransitionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    slide_index: int
+    timestamp_ms: int

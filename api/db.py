@@ -274,6 +274,36 @@ class AnalysisResult(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class SlideDeck(Base):
+    """§4.2 — one PDF slide deck per session. `storage_key` is the PDF
+    itself; per-page thumbnails are stored separately (rendered once at
+    upload time, keyed by page index) since a talk with 40 slides
+    shouldn't re-rasterize the whole deck on every transcript view."""
+
+    __tablename__ = "slide_decks"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"), unique=True)
+    filename: Mapped[str] = mapped_column(String)
+    page_count: Mapped[int] = mapped_column(Integer)
+    storage_key: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class SlideTransition(Base):
+    """§4.2 — one "the presenter advanced to slide N" mark, timestamped
+    against the recording's elapsed milliseconds (same clock as
+    `TranscriptWord.start_ms`), so a transcript word's slide is whichever
+    transition's timestamp is the latest one at or before it."""
+
+    __tablename__ = "slide_transitions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"))
+    slide_index: Mapped[int] = mapped_column(Integer)  # 0-based
+    timestamp_ms: Mapped[int] = mapped_column(Integer)
+
+
 _engine = create_engine(
     settings.database_url,
     connect_args={"check_same_thread": False} if settings.database_url.startswith("sqlite") else {},

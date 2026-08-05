@@ -23,11 +23,14 @@ from api.db import (
     PracticeSession,
     PushSubscription,
     Reminder,
+    SlideDeck,
+    SlideTransition,
     Subscription,
     TranscriptCorrection,
     TranscriptWord,
     User,
 )
+from api.slides import slide_thumbnail_key
 from api.storage import ObjectStore
 
 DEFAULT_RETENTION_DAYS = 30
@@ -46,6 +49,13 @@ def delete_session_data(db: OrmSession, store: ObjectStore, session_id: str) -> 
     Losing correction history on delete is the accepted cost.
     """
     store.delete(_media_key(session_id))
+    deck = db.query(SlideDeck).filter_by(session_id=session_id).one_or_none()
+    if deck is not None:
+        store.delete(deck.storage_key)
+        for page in range(deck.page_count):
+            store.delete(slide_thumbnail_key(session_id, page))
+    db.query(SlideTransition).filter_by(session_id=session_id).delete()
+    db.query(SlideDeck).filter_by(session_id=session_id).delete()
     db.query(TranscriptCorrection).filter_by(session_id=session_id).delete()
     db.query(TranscriptWord).filter_by(session_id=session_id).delete()
     db.query(MetricEventRow).filter_by(session_id=session_id).delete()

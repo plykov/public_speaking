@@ -103,6 +103,17 @@ export interface SubscriptionOut {
   analyses_limit: number | null;
 }
 
+export interface SlideDeckOut {
+  filename: string;
+  page_count: number;
+  thumbnail_urls: string[];
+}
+
+export interface SlideTransitionOut {
+  slide_index: number;
+  timestamp_ms: number;
+}
+
 export interface AttemptSummaryOut {
   session_id: string;
   parent_session_id: string | null;
@@ -183,6 +194,44 @@ export async function uploadChunk(
     body: chunk,
   });
   return asJson<{ bytes_received: number }>(res);
+}
+
+export async function uploadSlideDeck(
+  sessionId: string,
+  file: File,
+): Promise<SlideDeckOut> {
+  const res = await fetch(
+    `${API_BASE}/sessions/${sessionId}/slides?filename=${encodeURIComponent(file.name)}`,
+    { method: "POST", body: file, headers: { "Content-Type": "application/pdf" } },
+  );
+  return asJson<SlideDeckOut>(res);
+}
+
+export async function fetchSlideDeck(sessionId: string): Promise<SlideDeckOut | null> {
+  const res = await fetch(`${API_BASE}/sessions/${sessionId}/slides`);
+  if (res.status === 404) return null;
+  return asJson<SlideDeckOut>(res);
+}
+
+export function slideThumbnailUrl(path: string): string {
+  return `${API_BASE}${path}`;
+}
+
+export async function upsertSlideTransitions(
+  sessionId: string,
+  transitions: SlideTransitionOut[],
+): Promise<SlideTransitionOut[]> {
+  const res = await fetch(`${API_BASE}/sessions/${sessionId}/slide-transitions`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ transitions }),
+  });
+  return asJson<SlideTransitionOut[]>(res);
+}
+
+export async function fetchSlideTransitions(sessionId: string): Promise<SlideTransitionOut[]> {
+  const res = await fetch(`${API_BASE}/sessions/${sessionId}/slide-transitions`);
+  return asJson<SlideTransitionOut[]>(res);
 }
 
 export async function getUploadStatus(sessionId: string): Promise<{ bytes_received: number }> {

@@ -85,6 +85,7 @@ upload (chunked, resumable) → normalize → STT → deterministic metrics
 | `api.billing` | §4.1 M12, §8.1 | Entitlement logic (`effective_tier()`, `quota_exceeded()`) plus the no-real-Stripe provider seam — same pattern as `api.pipeline.stt` / `api.pipeline.llm` |
 | `api.push` | §4.2 | Real Web Push send (VAPID keys + `pywebpush`) — genuinely delivers, unlike the STT/LLM/Stripe seams; the gap is scheduling *when* to send, not the send itself |
 | `api.l1_calibration` | §4.2 | Catalog of nine L1 calibration profiles (RU/NL/DE/FR/ES/PT-BR/ZH/HI/JA) — real, authored content, no vendor dependency |
+| `api.slides` | §4.2 | PDF page count + thumbnail rendering (PyMuPDF) — real, deterministic, no vendor dependency (AGPL license caveat noted in the Phase 2 section) |
 
 ### Data model (§6.4)
 
@@ -100,6 +101,8 @@ upload (chunked, resumable) → normalize → STT → deterministic metrics
 | `TranscriptCorrection` | — | Not a §6.4 entity — logs each M8 word-level correction (original/corrected text) with a snapshot of the speaker's L1 background, an ASR-quality-by-cohort signal per §6.6. Deleted along with its session (privacy over long-term analytics — see below) |
 | `Reminder` | `reminder` | Days + time-of-day preference for the M10 habit layer. Storing the preference is the whole scope — see below |
 | `PushSubscription` | — | Not a §6.4 entity — a browser's `PushSubscription.toJSON()` (endpoint + keys), for §4.2 Web Push. Unique on `endpoint`, since that *is* the subscription's identity |
+| `SlideDeck` | `slide_decks` | Not a §6.4 entity — one PDF per session (§4.2), storage key + page count |
+| `SlideTransition` | `slide_transitions` | Not a §6.4 entity — "advanced to slide N at elapsed-ms T" marks (§4.2), used client-side to link transcript evidence to a slide |
 | `Subscription` | `subscription` | Tier/status/period-end for M12 billing — see below. A user with no row (or an expired `event_sprint`) is free-tier by construction, computed in `api.billing.effective_tier()`, never trusted from `.tier` alone |
 | `CheckoutSession` | — | Not a §6.4 entity — a pending mock checkout, resolved by the confirm endpoint standing in for a Stripe webhook |
 | `AnalysisResult` | — | Not a §6.4 entity — a per-attempt stamp of `rubric_version`/`model_version`, the computed metrics summary (kept as JSON: it's a derived aggregate, not a core entity), and a snapshot of the recommended drill |
@@ -253,6 +256,52 @@ not to say" option that falls back to the original free-text input — nobody
 outside the nine-language catalog loses the ability to onboard. Verified
 live: picking Russian shows its note, switching to Other reveals the text
 field, and submission reaches the recorder either way.
+
+### Slide/PDF upload with slide-linked transcript (§4.2)
+
+Real, no vendor gap: `api/slides.py` renders an uploaded PDF's page count
+and per-page PNG thumbnails using PyMuPDF (`fitz`) — deterministic, no
+LLM/network call, same "pure function over bytes" shape as `metrics/`.
+
+**License note, stated rather than hidden**: PyMuPDF's open-source
+distribution is AGPL-3.0. Fine for demonstrating this scope item; a real
+deployment shipping closed-source code alongside it would need Artifex's
+commercial license or a swap to a permissively-licensed renderer (e.g.
+shelling out to Poppler's `pdftoppm`) — a vendor-swap decision, not an
+architecture change, since everything downstream only depends on
+`count_pages`/`render_thumbnails`'s signatures.
+
+| Endpoint | Behavior |
+|---|---|
+| `POST /sessions/{id}/slides` | Upload/replace a session's PDF deck; renders + stores per-page thumbnails, returns page count + thumbnail URLs. Rejects non-PDF bytes with 422 |
+| `GET /sessions/{id}/slides` | Deck metadata + thumbnail URLs |
+| `GET /sessions/{id}/slides/{page}/thumbnail` | One page's PNG |
+| `PUT /sessions/{id}/slide-transitions` | Replace the full list of "advanced to slide N at elapsed-ms T" marks (same replace-not-append pattern as §4.1 M8's transcript correction) |
+| `GET /sessions/{id}/slide-transitions` | The current list, sorted by timestamp |
+
+**Slide-linking is computed client-side, not server-side.** `web/src/lib/slideLinking.ts`'s
+`buildSlideLookup()` takes the transitions list and returns a pure
+`(ms) => slideIndex` function — kept out of the transcript/evidence tables
+entirely so this feature never touches the deterministic pipeline's schema.
+`Scorecard.tsx` calls it per feedback item's `evidence_start_ms` to show a
+thumbnail + "Slide N" badge next to the evidence quote.
+
+**Frontend flow**: the baseline session is now created up front (moved out
+of `runAnalysis`, which previously created it lazily) so `SlideDeckPanel`
+has a session to attach the PDF to before recording starts.
+`RecorderPanel` grows optional `slidePageCount`/`onSlideAdvance` props: when
+a deck is present, a "Next slide →" button appears during recording and
+reports `(slideIndex, elapsedMs)` on click, using the same recording clock
+as `TranscriptWord.start_ms`. Transitions are submitted right before
+`/analyze` is called. Scoped to the baseline attempt only for now — the
+retry/drill recording doesn't yet get its own deck, a stated gap rather
+than a silent one.
+
+Verified live end to end via Playwright: uploaded a real 3-page PDF built
+with PyMuPDF, saw its thumbnails render in the upload panel, advanced
+slides during a real recording, and confirmed the resulting scorecard's
+feedback items each show the correct slide thumbnail + badge for their
+evidence timestamp.
 
 ### Privacy controls (§4.1 M11, §6.5)
 
@@ -446,11 +495,12 @@ provider-seam-plus-mock pattern), and calendar integration. Every §4.1
 MVP checklist item (M1-M12) is complete at the mock/seam level this
 environment allows; going further on those means real vendor
 credentials (Stripe, AssemblyAI/Deepgram, a frontier LLM) this
-environment doesn't have. Web Push (§4.2) and L1 calibration profiles (§4.2) are the two Phase 2
-items completed so far — both genuinely real, no vendor gap. Everything
-else in Phase 2/3 (voice roleplay, exemplar mode, coach share links,
-slide/PDF-linked transcripts, calendar integration, team workspaces) is
-still ahead.
+environment doesn't have. Web Push, L1 calibration profiles, and
+slide/PDF-linked transcripts (all §4.2) are the three Phase 2 items
+completed so far — all genuinely real, no vendor gap (slides carry a
+stated PyMuPDF license caveat, not a functionality gap). Everything else
+in Phase 2/3 (voice roleplay, exemplar mode, coach share links, calendar
+integration, team workspaces) is still ahead.
 
 ## Testing
 
@@ -462,4 +512,4 @@ pytest --cov=metrics --cov=api --cov-report=term-missing
 cd web && npx tsc --noEmit && npm run lint && npm run build
 ```
 
-180 backend tests, 99% line coverage as of this commit.
+200 backend tests, 99% line coverage as of this commit.
