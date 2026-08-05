@@ -18,6 +18,7 @@ from api.routers.roleplay import persona_router as roleplay_persona_router
 from api.routers.roleplay import router as roleplay_router
 from api.routers.sessions import router as sessions_router
 from api.routers.sharing import router as sharing_router
+from api.routers.teams import router as teams_router
 from api.routers.slides import router as slides_router
 from api.routers.users import catalog_router as l1_catalog_router
 from api.routers.users import router as users_router
@@ -50,6 +51,7 @@ app.include_router(billing_router)
 app.include_router(push_router)
 app.include_router(slides_router)
 app.include_router(sharing_router)
+app.include_router(teams_router)
 app.include_router(roleplay_router)
 app.include_router(roleplay_persona_router)
 app.include_router(calendar_router)

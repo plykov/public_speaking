@@ -535,3 +535,147 @@ export async function getSubscription(userId: string): Promise<SubscriptionOut> 
   const res = await fetch(`${API_BASE}/users/${userId}/subscription`);
   return asJson<SubscriptionOut>(res);
 }
+
+export interface TeamMemberOut {
+  user_id: string;
+  role: "admin" | "member";
+  joined_at: string;
+}
+
+export interface TeamOut {
+  id: string;
+  name: string;
+  created_at: string;
+}
+
+export interface TeamWithMembersOut extends TeamOut {
+  members: TeamMemberOut[];
+}
+
+export interface TeamInviteOut {
+  token: string;
+  team_id: string;
+  role: "admin" | "member";
+  accepted: boolean;
+}
+
+export interface TeamScenarioOut {
+  id: string;
+  team_id: string;
+  title: string;
+  prompt: string;
+  created_at: string;
+}
+
+export interface TeamRubricOut {
+  id: string;
+  team_id: string;
+  name: string;
+  criteria: string[];
+  created_at: string;
+}
+
+/** §4.3 team workspaces. No auth exists in this app — see api/routers/teams.py. */
+export async function createTeam(name: string, adminUserId: string): Promise<TeamWithMembersOut> {
+  const res = await fetch(`${API_BASE}/teams`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, admin_user_id: adminUserId }),
+  });
+  return asJson<TeamWithMembersOut>(res);
+}
+
+export async function getTeam(teamId: string): Promise<TeamWithMembersOut> {
+  const res = await fetch(`${API_BASE}/teams/${teamId}`);
+  return asJson<TeamWithMembersOut>(res);
+}
+
+export async function listTeamsForUser(userId: string): Promise<TeamOut[]> {
+  const res = await fetch(`${API_BASE}/users/${userId}/teams`);
+  return asJson<TeamOut[]>(res);
+}
+
+export async function createTeamInvite(
+  teamId: string,
+  role: "admin" | "member" = "member",
+): Promise<TeamInviteOut> {
+  const res = await fetch(`${API_BASE}/teams/${teamId}/invites`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role }),
+  });
+  return asJson<TeamInviteOut>(res);
+}
+
+export async function acceptTeamInvite(
+  token: string,
+  userId: string,
+): Promise<TeamMemberOut> {
+  const res = await fetch(`${API_BASE}/team-invites/${token}/accept`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user_id: userId }),
+  });
+  return asJson<TeamMemberOut>(res);
+}
+
+export async function removeTeamMember(teamId: string, userId: string): Promise<void> {
+  await fetch(`${API_BASE}/teams/${teamId}/members/${userId}`, { method: "DELETE" });
+}
+
+export async function updateMemberRole(
+  teamId: string,
+  userId: string,
+  role: "admin" | "member",
+): Promise<TeamMemberOut> {
+  const res = await fetch(`${API_BASE}/teams/${teamId}/members/${userId}/role`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role }),
+  });
+  return asJson<TeamMemberOut>(res);
+}
+
+export async function createTeamScenario(
+  teamId: string,
+  title: string,
+  prompt: string,
+): Promise<TeamScenarioOut> {
+  const res = await fetch(`${API_BASE}/teams/${teamId}/scenarios`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title, prompt }),
+  });
+  return asJson<TeamScenarioOut>(res);
+}
+
+export async function listTeamScenarios(teamId: string): Promise<TeamScenarioOut[]> {
+  const res = await fetch(`${API_BASE}/teams/${teamId}/scenarios`);
+  return asJson<TeamScenarioOut[]>(res);
+}
+
+export async function deleteTeamScenario(teamId: string, scenarioId: string): Promise<void> {
+  await fetch(`${API_BASE}/teams/${teamId}/scenarios/${scenarioId}`, { method: "DELETE" });
+}
+
+export async function createTeamRubric(
+  teamId: string,
+  name: string,
+  criteria: string[],
+): Promise<TeamRubricOut> {
+  const res = await fetch(`${API_BASE}/teams/${teamId}/rubrics`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, criteria }),
+  });
+  return asJson<TeamRubricOut>(res);
+}
+
+export async function listTeamRubrics(teamId: string): Promise<TeamRubricOut[]> {
+  const res = await fetch(`${API_BASE}/teams/${teamId}/rubrics`);
+  return asJson<TeamRubricOut[]>(res);
+}
+
+export async function deleteTeamRubric(teamId: string, rubricId: string): Promise<void> {
+  await fetch(`${API_BASE}/teams/${teamId}/rubrics/${rubricId}`, { method: "DELETE" });
+}

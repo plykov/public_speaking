@@ -90,6 +90,7 @@ upload (chunked, resumable) → normalize → STT → deterministic metrics
 | `api.pipeline.exemplar` | §4.2 | Exemplar-mode seam + mock (same pattern as STT/LLM/billing) — real rewrite quality needs a frontier model, not available in this environment |
 | `api.pipeline.roleplay` | §4.2 | Persona catalog (3) + roleplay-reply seam/mock + multi-persona round-robin turn-picking. STT reused for real from `api.pipeline.stt`; TTS is genuinely real via the browser's `SpeechSynthesis` API, no mock needed |
 | `api.calendar` | §4.2 | Calendar-connection seam/mock (real Google/Microsoft OAuth needs an app registration not available here) + genuinely real imminent-event-to-drill matching |
+| `api.routers.teams` | §4.3 | Team workspaces, membership/roles (not enforced — no auth system exists), invites, custom scenarios (real) + custom rubrics (stored, not yet consumed by scoring) |
 
 ### Data model (§6.4)
 
@@ -110,6 +111,8 @@ upload (chunked, resumable) → normalize → STT → deterministic metrics
 | `ShareLink` | `share_links` | Not a §6.4 entity — a coach/manager share link (§4.2): token, three permission flags, optional expiry, soft-delete via `revoked_at` |
 | `RoleplaySession` / `RoleplayTurn` | `roleplay_sessions` / `roleplay_turns` | Not §6.4 entities — a turn-based voice roleplay conversation (§4.2, single- or multi-persona via `persona_ids`) and its dialogue lines (`persona_id` attributes each persona turn). No raw audio ever stored for a turn |
 | `CalendarConnection` | `calendar_connections` | Not a §6.4 entity — whether/which calendar provider (§4.2) a user has connected. One row per user |
+| `Team` / `TeamMembership` / `TeamInvite` | `teams` / `team_memberships` / `team_invites` | Not §6.4 entities — team workspace (§4.3), membership + advisory role, one-time invite tokens |
+| `TeamScenario` / `TeamRubric` | `team_scenarios` / `team_rubrics` | Not §6.4 entities — team-authored custom scenario prompts (real) and rubric criteria (stored, not yet consumed by scoring) |
 | `Subscription` | `subscription` | Tier/status/period-end for M12 billing — see below. A user with no row (or an expired `event_sprint`) is free-tier by construction, computed in `api.billing.effective_tier()`, never trusted from `.tier` alone |
 | `CheckoutSession` | — | Not a §6.4 entity — a pending mock checkout, resolved by the confirm endpoint standing in for a Stripe webhook |
 | `AnalysisResult` | — | Not a §6.4 entity — a per-attempt stamp of `rubric_version`/`model_version`, the computed metrics summary (kept as JSON: it's a derived aggregate, not a core entity), and a snapshot of the recommended drill |
@@ -539,6 +542,42 @@ pipeline run without a real STT vendor; point `STT_PROVIDER` /
   sentence rather than guessing — guessing would make point-position
   scoring non-deterministic.
 
+## Phase 3
+
+### Team workspaces + custom scenarios + custom rubrics (§4.3)
+
+Real, no vendor gap — but with one honestly-stated limitation baked into
+the model itself: **this app has no auth/session system at all.**
+`User` (api/db.py) has been anonymous and device-scoped since Phase 1;
+nothing in Phase 3 changes that. `Team`/`TeamMembership`/`TeamInvite`
+track membership and an `admin`/`member` role, and the frontend's `/team`
+page shows role-gated-looking buttons ("Make admin," "Remove"), but
+**nothing enforces it server-side** — any caller who knows a `team_id`
+and a `user_id` can currently call any team endpoint. `api/routers/teams.py`
+says this plainly in its module docstring rather than presenting a data
+model as if it were a security boundary. A real deployment needs a login
+system before team roles mean anything as access control.
+
+| Endpoint | Behavior |
+|---|---|
+| `POST /teams` | Create a team; creator becomes its first `admin` member |
+| `GET /teams/{id}` | Team + member list |
+| `GET /users/{id}/teams` | Teams a user belongs to |
+| `PUT /teams/{id}/members/{user_id}/role` | Change a member's role |
+| `DELETE /teams/{id}/members/{user_id}` | Remove a member |
+| `POST /teams/{id}/invites` | Create a one-time invite token (no email delivery — same no-SMTP gap as weekly summaries/reminders elsewhere; a real deployment's email provider would send the link) |
+| `POST /team-invites/{token}/accept` | Join a team via an invite link; 410 if already used, 409 if already a member |
+| `POST /teams/{id}/scenarios` / `GET` / `DELETE` | Custom scenarios — **genuinely real**: a team-authored title/prompt, usable as a real practice prompt |
+| `POST /teams/{id}/rubrics` / `GET` / `DELETE` | Custom rubrics — stored and manageable for real, but **not yet consumed by scoring**: `MockLLMRubricProvider` (api/pipeline/llm.py) is rule-based over deterministic metrics and never reads `ScenarioRubric.criteria` at all, mock or custom. Wiring a team's criteria into what gets judged is only meaningful once a real LLM provider exists behind that seam — not a fake cosmetic toggle |
+
+**Frontend**: `/team` — create/select a team, manage members and roles,
+generate an invite link, author custom scenarios and rubrics.
+`/team/join/[token]` accepts an invite. Verified live end to end across
+two separate browser contexts (simulating two different users/devices):
+created a team in context 1, generated an invite link, opened it in
+context 2 (a different anonymous user), accepted it, and confirmed both
+members now appear in the roster from either context.
+
 ## `web/` — Practice Studio (§4.1 M1/M2, §5 first-session flow)
 
 A real Next.js frontend, not fake data — it drives the actual FastAPI
@@ -646,26 +685,24 @@ onboarding is there to attach an L1 profile, not gate access.
 
 ## What's still out of scope
 
-Auth (the `User` table is anonymous/device-scoped, not a login system),
-a real Stripe/STT/LLM vendor integration (all three follow the same
-provider-seam-plus-mock pattern), and calendar integration. Every §4.1
-MVP checklist item (M1-M12) is complete at the mock/seam level this
-environment allows; going further on those means real vendor
-credentials (Stripe, AssemblyAI/Deepgram, a frontier LLM) this
-environment doesn't have. **All eight §4.2 (Phase 2) items are now
-built.** Web Push, L1 calibration profiles, slide/PDF-linked transcripts,
-and coach/manager share links are genuinely real end to end, no vendor
-gap (slides carry a stated PyMuPDF license caveat, not a functionality
-gap). Exemplar mode, voice roleplay (single- and multi-persona), and
-calendar integration use the same seam-plus-mock pattern as
-STT/LLM/billing: the plumbing is real (STT reuse, turn-based state
-machine with round-robin multi-persona turn-taking, browser-native TTS,
-imminent-event-to-drill matching), but a truly stronger *rewrite*,
-*conversational reply*, or *calendar OAuth connection* needs
-infrastructure (a frontier model, a real Google/Microsoft app
-registration) this environment doesn't have, so those specific pieces are
-mocked and say so in the UI. Phase 3 (team workspaces, SSO, LMS,
-consented meeting-recording analysis) is still ahead.
+**Auth — the single biggest standing gap.** The `User` table has been
+anonymous/device-scoped since Phase 1; there is still no login system
+anywhere in this app. Phase 3's team roles (`admin`/`member`) are tracked
+but **not enforced** as a result — stated plainly in `api/routers/teams.py`
+rather than presented as real access control. Every other gap in this
+project is a vendor-credential problem; this one is architectural, and
+would need solving before team/manager features are safe to expose beyond
+a demo.
+
+Every §4.1 MVP checklist item (M1-M12) and all eight §4.2 (Phase 2) items
+are complete. §4.3 (Phase 3) is in progress: team workspaces and custom
+scenarios are genuinely real (modulo the auth gap above); custom rubrics
+are stored but not yet consumed by scoring (same reason as the mock LLM
+rubric provider generally — see `api/pipeline/llm.py`). Going further on
+the vendor-credential gaps (Stripe, AssemblyAI/Deepgram, a frontier LLM,
+Google/Microsoft OAuth for calendar) means real credentials this
+environment doesn't have; every one of those follows the same
+provider-seam-plus-mock pattern, documented at each seam.
 
 ## Testing
 
@@ -677,4 +714,4 @@ pytest --cov=metrics --cov=api --cov-report=term-missing
 cd web && npx tsc --noEmit && npm run lint && npm run build
 ```
 
-283 backend tests, 99% line coverage as of this commit.
+310 backend tests, 99% line coverage as of this commit.

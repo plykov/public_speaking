@@ -375,3 +375,102 @@ class UpcomingPromptOut(BaseModel):
     event_title: str | None = None
     minutes_until: int | None = None
     drill: DrillOut | None = None
+
+
+_VALID_TEAM_ROLES = {"admin", "member"}
+
+
+class CreateTeamRequest(BaseModel):
+    name: str
+    admin_user_id: str
+
+
+class TeamOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    created_at: datetime
+
+
+class TeamMemberOut(BaseModel):
+    user_id: str
+    role: str
+    joined_at: datetime
+
+
+class TeamWithMembersOut(BaseModel):
+    id: str
+    name: str
+    created_at: datetime
+    members: list[TeamMemberOut]
+
+
+class CreateTeamInviteRequest(BaseModel):
+    role: str = "member"
+
+    @field_validator("role")
+    @classmethod
+    def _valid_role(cls, value: str) -> str:
+        if value not in _VALID_TEAM_ROLES:
+            raise ValueError(f"role must be one of {sorted(_VALID_TEAM_ROLES)}")
+        return value
+
+
+class TeamInviteOut(BaseModel):
+    token: str
+    team_id: str
+    role: str
+    accepted: bool
+
+
+class AcceptInviteRequest(BaseModel):
+    user_id: str
+
+
+class UpdateMemberRoleRequest(BaseModel):
+    role: str
+
+    @field_validator("role")
+    @classmethod
+    def _valid_role(cls, value: str) -> str:
+        if value not in _VALID_TEAM_ROLES:
+            raise ValueError(f"role must be one of {sorted(_VALID_TEAM_ROLES)}")
+        return value
+
+
+class CreateTeamScenarioRequest(BaseModel):
+    title: str
+    prompt: str
+
+
+class TeamScenarioOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    team_id: str
+    title: str
+    prompt: str
+    created_at: datetime
+
+
+class CreateTeamRubricRequest(BaseModel):
+    name: str
+    criteria: list[str]
+
+    @field_validator("criteria")
+    @classmethod
+    def _non_empty_criteria(cls, value: list[str]) -> list[str]:
+        if not value:
+            raise ValueError("criteria must not be empty")
+        return value
+
+
+class TeamRubricOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    team_id: str
+    name: str
+    criteria: list[str]
+    created_at: datetime
