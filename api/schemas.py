@@ -328,7 +328,11 @@ class RoleplayPersonaOut(BaseModel):
 
 
 class CreateRoleplaySessionRequest(BaseModel):
-    persona_id: str
+    """Single-persona: set `persona_id`. Multi-persona (§4.2): set
+    `persona_ids` instead (2+ ids) — exactly one of the two must be set."""
+
+    persona_id: str | None = None
+    persona_ids: list[str] | None = None
     scenario: str = "roleplay"
     user_id: str | None = None
 
@@ -338,12 +342,13 @@ class RoleplayTurnOut(BaseModel):
 
     turn_index: int
     speaker: str
+    persona_id: str | None = None  # which persona spoke; null for user turns
     text: str
 
 
 class RoleplaySessionOut(BaseModel):
     id: str
-    persona_id: str
+    persona_ids: list[str]
     scenario: str
     status: str
     turns: list[RoleplayTurnOut]

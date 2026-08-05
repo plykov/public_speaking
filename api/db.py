@@ -329,23 +329,29 @@ class ShareLink(Base):
 
 
 class RoleplaySession(Base):
-    """§4.2 — one turn-based voice roleplay conversation with a persona."""
+    """§4.2 — one turn-based voice roleplay conversation. `persona_ids` is a
+    JSON list: length 1 for single-persona (§4.2 first item), length 2+ for
+    multi-persona (§4.2 second item) — one column covers both rather than
+    duplicating the session model for what's really the same conversation
+    shape with more speakers on one side."""
 
     __tablename__ = "roleplay_sessions"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    persona_id: Mapped[str] = mapped_column(String)
+    persona_ids: Mapped[list[str]] = mapped_column(JSON)
     scenario: Mapped[str] = mapped_column(String)
     status: Mapped[str] = mapped_column(String, default="active")  # "active" | "completed"
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
 class RoleplayTurn(Base):
-    """§4.2 — one line of dialogue, either side. `speaker` is "user" or
-    "persona"; user turns carry the STT-transcribed text of a real
-    recording, persona turns are the (mock or real) LLM's reply text,
-    spoken client-side via the browser's SpeechSynthesis API."""
+    """§4.2 — one line of dialogue. `speaker` is "user" or "persona";
+    `persona_id` identifies *which* persona spoke (null for user turns,
+    always set for persona turns — meaningful once there's more than one).
+    User turns carry the STT-transcribed text of a real recording, persona
+    turns are the (mock or real) LLM's reply text, spoken client-side via
+    the browser's SpeechSynthesis API."""
 
     __tablename__ = "roleplay_turns"
 
@@ -353,6 +359,7 @@ class RoleplayTurn(Base):
     roleplay_session_id: Mapped[str] = mapped_column(ForeignKey("roleplay_sessions.id"))
     turn_index: Mapped[int] = mapped_column(Integer)
     speaker: Mapped[str] = mapped_column(String)
+    persona_id: Mapped[str | None] = mapped_column(String, nullable=True)
     text: Mapped[str] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 

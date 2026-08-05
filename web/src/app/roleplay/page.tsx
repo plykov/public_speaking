@@ -16,6 +16,7 @@ import { getStoredUserId } from "@/lib/localUser";
 
 export default function RoleplayPage() {
   const [personas, setPersonas] = useState<RoleplayPersonaOut[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [session, setSession] = useState<RoleplaySessionOut | null>(null);
   const [transcriptId, setTranscriptId] = useState(SAMPLE_TRANSCRIPTS[0].id);
   const [submitting, setSubmitting] = useState(false);
@@ -27,7 +28,7 @@ export default function RoleplayPage() {
     fetchRoleplayPersonas()
       .then(setPersonas)
       .catch(() => setPersonas([]));
-    setSpeechSupported(ttsSupported());
+    Promise.resolve().then(() => setSpeechSupported(ttsSupported()));
   }, []);
 
   useEffect(() => {
@@ -40,10 +41,22 @@ export default function RoleplayPage() {
     }
   }, [session, spokenTurnIndexes]);
 
-  async function handleStart(personaId: string) {
+  function toggleSelected(personaId: string) {
+    setSelectedIds((prev) =>
+      prev.includes(personaId) ? prev.filter((id) => id !== personaId) : [...prev, personaId],
+    );
+  }
+
+  function personaName(personaId: string | null): string {
+    if (!personaId) return "You";
+    return personas.find((p) => p.id === personaId)?.name ?? personaId;
+  }
+
+  async function handleStart() {
+    if (selectedIds.length === 0) return;
     setError(null);
     try {
-      const created = await createRoleplaySession(personaId, getStoredUserId() ?? undefined);
+      const created = await createRoleplaySession(selectedIds, getStoredUserId() ?? undefined);
       setSession(created);
     } catch (err) {
       setError(err instanceof Error ? err.message : "couldn't start the roleplay");
@@ -82,15 +95,31 @@ export default function RoleplayPage() {
 
       {!session && (
         <div className="card stack">
-          <p>Choose a persona</p>
+          <p>
+            Choose one persona, or select more than one for a multi-persona panel — they take
+            turns responding.
+          </p>
           {personas.map((p) => (
             <div key={p.id} className="stack" style={{ gap: 4 }}>
-              <button className="btn btn-primary" onClick={() => handleStart(p.id)}>
+              <button
+                className="btn"
+                style={
+                  selectedIds.includes(p.id)
+                    ? { borderColor: "var(--accent)", fontWeight: 600 }
+                    : undefined
+                }
+                onClick={() => toggleSelected(p.id)}
+              >
                 {p.name} — {p.role}
               </button>
               <p style={{ color: "var(--muted)", fontSize: "0.85rem" }}>{p.description}</p>
             </div>
           ))}
+          <button className="btn btn-primary" onClick={handleStart} disabled={selectedIds.length === 0}>
+            {selectedIds.length > 1
+              ? `Start panel (${selectedIds.length} personas)`
+              : "Start roleplay"}
+          </button>
         </div>
       )}
 
@@ -102,7 +131,7 @@ export default function RoleplayPage() {
             </div>
             {session.turns.map((turn: RoleplayTurnOut) => (
               <div key={turn.turn_index} className="feedback-item">
-                <div className="criterion">{turn.speaker === "persona" ? "Them" : "You"}</div>
+                <div className="criterion">{personaName(turn.persona_id)}</div>
                 <p>{turn.text}</p>
               </div>
             ))}
@@ -118,7 +147,13 @@ export default function RoleplayPage() {
           )}
 
           {session.status === "completed" && (
-            <button className="btn" onClick={() => setSession(null)}>
+            <button
+              className="btn"
+              onClick={() => {
+                setSession(null);
+                setSelectedIds([]);
+              }}
+            >
               Start a new roleplay
             </button>
           )}

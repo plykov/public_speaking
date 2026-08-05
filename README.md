@@ -88,7 +88,7 @@ upload (chunked, resumable) → normalize → STT → deterministic metrics
 | `api.slides` | §4.2 | PDF page count + thumbnail rendering (PyMuPDF) — real, deterministic, no vendor dependency (AGPL license caveat noted in the Phase 2 section) |
 | `api.sharing` | §4.2 | Token generation + expiry/revocation check for coach/manager share links — real, no vendor dependency |
 | `api.pipeline.exemplar` | §4.2 | Exemplar-mode seam + mock (same pattern as STT/LLM/billing) — real rewrite quality needs a frontier model, not available in this environment |
-| `api.pipeline.roleplay` | §4.2 | Persona catalog + roleplay-reply seam/mock. STT reused for real from `api.pipeline.stt`; TTS is genuinely real via the browser's `SpeechSynthesis` API, no mock needed |
+| `api.pipeline.roleplay` | §4.2 | Persona catalog (3) + roleplay-reply seam/mock + multi-persona round-robin turn-picking. STT reused for real from `api.pipeline.stt`; TTS is genuinely real via the browser's `SpeechSynthesis` API, no mock needed |
 
 ### Data model (§6.4)
 
@@ -107,7 +107,7 @@ upload (chunked, resumable) → normalize → STT → deterministic metrics
 | `SlideDeck` | `slide_decks` | Not a §6.4 entity — one PDF per session (§4.2), storage key + page count |
 | `SlideTransition` | `slide_transitions` | Not a §6.4 entity — "advanced to slide N at elapsed-ms T" marks (§4.2), used client-side to link transcript evidence to a slide |
 | `ShareLink` | `share_links` | Not a §6.4 entity — a coach/manager share link (§4.2): token, three permission flags, optional expiry, soft-delete via `revoked_at` |
-| `RoleplaySession` / `RoleplayTurn` | `roleplay_sessions` / `roleplay_turns` | Not §6.4 entities — a turn-based voice roleplay conversation (§4.2) and its dialogue lines. No raw audio ever stored for a turn |
+| `RoleplaySession` / `RoleplayTurn` | `roleplay_sessions` / `roleplay_turns` | Not §6.4 entities — a turn-based voice roleplay conversation (§4.2, single- or multi-persona via `persona_ids`) and its dialogue lines (`persona_id` attributes each persona turn). No raw audio ever stored for a turn |
 | `Subscription` | `subscription` | Tier/status/period-end for M12 billing — see below. A user with no row (or an expired `event_sprint`) is free-tier by construction, computed in `api.billing.effective_tier()`, never trusted from `.tier` alone |
 | `CheckoutSession` | — | Not a §6.4 entity — a pending mock checkout, resolved by the confirm endpoint standing in for a Stripe webhook |
 | `AnalysisResult` | — | Not a §6.4 entity — a per-attempt stamp of `rubric_version`/`model_version`, the computed metrics summary (kept as JSON: it's a derived aggregate, not a core entity), and a snapshot of the recommended drill |
@@ -367,7 +367,7 @@ through, and confirmed the panel correctly moved the recommendation
 sentence first and stripped the hedge, with an accurate explanation of
 both changes.
 
-### Voice AI roleplay, single persona (§4.2 — "streaming STT → LLM → TTS")
+### Voice AI roleplay — single- and multi-persona (§4.2 — "streaming STT → LLM → TTS")
 
 Three legs, three different levels of "real" in this environment:
 
@@ -389,20 +389,39 @@ Three legs, three different levels of "real" in this environment:
   (`web/src/lib/tts.ts`), the same "the browser already has this
   capability, use it directly" move as Web Push's own push service.
 
+One session model covers both single- and multi-persona conversations —
+`RoleplaySession.persona_ids` is a JSON list, length 1 for single-persona,
+2+ for multi (§4.2's second roleplay item), rather than two separate
+session shapes for what's the same conversation with more speakers on one
+side. Three personas ship: Priya (skeptical stakeholder), Marcus
+(data-driven skeptic), Elena (time-pressured executive) — each with its
+own opening line, follow-up bank, and closing line.
+
+**Multi-persona turn-taking**: `pick_next_persona()` round-robins whose
+turn it is to respond (1st user turn → `persona_ids[0]`, 2nd →
+`persona_ids[1]`, ...), and a shared `GROUP_MAX_USER_TURNS` (4) closes the
+conversation regardless of how many personas are in it — a 3-persona panel
+doesn't take 3x as many rounds just because there are more speakers.
+`RoleplayTurn.persona_id` records which persona said which line so the
+frontend can attribute (and could pick different TTS voices per persona,
+not implemented here).
+
 | Endpoint | Behavior |
 |---|---|
-| `GET /roleplay-personas` | Catalog (one persona for this item: "Priya," a skeptical stakeholder) |
-| `POST /roleplay-sessions` | Create a session for a persona; returns it with the persona's opening line as turn 0 |
+| `GET /roleplay-personas` | The catalog: id, name, role, description |
+| `POST /roleplay-sessions` | Create a session — `persona_id` (single) or `persona_ids` (multi, 2+); returns it with the first persona's opening line as turn 0 |
 | `GET /roleplay-sessions/{id}` | Full turn history + status (`active`/`completed`) |
-| `POST /roleplay-sessions/{id}/turns` | Submit one recorded turn (raw audio body): transcribes, appends the user turn, generates + appends the persona's reply, closes the conversation after the persona's configured max turns |
+| `POST /roleplay-sessions/{id}/turns` | Submit one recorded turn (raw audio body): transcribes, appends the user turn, picks the next responding persona, generates + appends their reply, closes the conversation once the turn budget is spent |
 
-**Frontend**: `/roleplay` — pick a persona, hear/see its opening line,
-respond via the same dev-mode sample-transcript picker Practice Studio
-uses (no live STT vendor in this environment, same documented gap), watch
-the persona react and eventually close out the conversation. Verified
-live: the mock correctly detected a hedge ("maybe") and reacted to it
-mid-conversation, and the conversation closed with the persona's scripted
-closing line after its turn limit.
+**Frontend**: `/roleplay` — select one persona, or multiple for a panel
+(toggled as chips), hear/see the opening line, respond via the same
+dev-mode sample-transcript picker Practice Studio uses (no live STT vendor
+in this environment, same documented gap), watch personas react and take
+turns, and see the conversation close out. Verified live for both modes:
+single-persona correctly detected a hedge ("maybe") and reacted to it
+mid-conversation; a 2-persona panel round-robinned correctly (Priya →
+Marcus → Priya → Marcus) and closed on the shared turn budget rather than
+per-persona, with each line correctly attributed to the persona who said it.
 
 ### Privacy controls (§4.1 M11, §6.5)
 
@@ -599,14 +618,14 @@ credentials (Stripe, AssemblyAI/Deepgram, a frontier LLM) this
 environment doesn't have. Web Push, L1 calibration profiles,
 slide/PDF-linked transcripts, and coach/manager share links (all §4.2)
 are genuinely real, no vendor gap (slides carry a stated PyMuPDF license
-caveat, not a functionality gap). Exemplar mode and single-persona voice
-roleplay (§4.2) use the same seam-plus-mock pattern as STT/LLM/billing:
-the plumbing is real (STT reuse, turn-based state machine, browser-native
-TTS), but a truly stronger *rewrite* or *conversational reply* needs a
-frontier model this environment doesn't have, so both mocks are
-rule-based and say so in the UI. Everything else in Phase 2/3
-(multi-persona roleplay, calendar integration, team workspaces) is still
-ahead.
+caveat, not a functionality gap). Exemplar mode and voice roleplay
+(single- and multi-persona, §4.2) use the same seam-plus-mock pattern as
+STT/LLM/billing: the plumbing is real (STT reuse, turn-based state
+machine with round-robin multi-persona turn-taking, browser-native TTS),
+but a truly stronger *rewrite* or *conversational reply* needs a frontier
+model this environment doesn't have, so both mocks are rule-based and say
+so in the UI. Everything else in Phase 2/3 (calendar integration, team
+workspaces) is still ahead.
 
 ## Testing
 
@@ -618,4 +637,4 @@ pytest --cov=metrics --cov=api --cov-report=term-missing
 cd web && npx tsc --noEmit && npm run lint && npm run build
 ```
 
-253 backend tests, 99% line coverage as of this commit.
+261 backend tests, 99% line coverage as of this commit.

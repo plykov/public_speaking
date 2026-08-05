@@ -116,6 +116,68 @@ def test_submit_turn_unknown_session_404(client) -> None:
     assert resp.status_code == 404
 
 
+def test_create_multi_persona_session(client) -> None:
+    resp = client.post(
+        "/roleplay-sessions",
+        json={"persona_ids": ["skeptical_stakeholder", "data_driven_skeptic"]},
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["persona_ids"] == ["skeptical_stakeholder", "data_driven_skeptic"]
+    assert body["turns"][0]["persona_id"] == "skeptical_stakeholder"
+
+
+def test_create_session_requires_persona_id_or_ids(client) -> None:
+    resp = client.post("/roleplay-sessions", json={})
+    assert resp.status_code == 422
+
+
+def test_create_multi_persona_session_unknown_persona_404(client) -> None:
+    resp = client.post(
+        "/roleplay-sessions", json={"persona_ids": ["skeptical_stakeholder", "does-not-exist"]}
+    )
+    assert resp.status_code == 404
+
+
+def test_multi_persona_round_robin_and_speaker_attribution(client) -> None:
+    session = client.post(
+        "/roleplay-sessions",
+        json={"persona_ids": ["skeptical_stakeholder", "data_driven_skeptic", "time_pressured_exec"]},
+    ).json()
+    session_id = session["id"]
+    audio = mock_transcript_bytes(
+        [{"text": "we", "start_ms": 0, "end_ms": 100, "confidence": 0.95},
+         {"text": "should", "start_ms": 110, "end_ms": 200, "confidence": 0.95},
+         {"text": "ship", "start_ms": 210, "end_ms": 300, "confidence": 0.95}]
+    )
+
+    speakers = []
+    for _ in range(3):
+        resp = client.post(f"/roleplay-sessions/{session_id}/turns", content=audio)
+        speakers.append(resp.json()["new_turns"][1]["persona_id"])
+
+    # round-robin: 1st user turn -> persona[0], 2nd -> persona[1], 3rd -> persona[2]
+    assert speakers == ["skeptical_stakeholder", "data_driven_skeptic", "time_pressured_exec"]
+
+
+def test_multi_persona_closes_on_group_turn_budget_not_per_persona(client) -> None:
+    session = client.post(
+        "/roleplay-sessions",
+        json={"persona_ids": ["skeptical_stakeholder", "data_driven_skeptic"]},
+    ).json()
+    session_id = session["id"]
+    audio = mock_transcript_bytes(
+        [{"text": "yes", "start_ms": 0, "end_ms": 100, "confidence": 0.95}]
+    )
+    statuses = []
+    for _ in range(4):
+        resp = client.post(f"/roleplay-sessions/{session_id}/turns", content=audio)
+        statuses.append(resp.json()["session_status"])
+
+    # GROUP_MAX_USER_TURNS=4, shared across personas — not 3 turns per persona (would be 6)
+    assert statuses == ["active", "active", "active", "completed"]
+
+
 def test_account_delete_removes_roleplay_sessions(client) -> None:
     user_id = client.post("/users").json()["id"]
     session = _create_session(client, user_id=user_id)

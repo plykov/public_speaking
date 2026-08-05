@@ -3,11 +3,13 @@ from __future__ import annotations
 import pytest
 
 from api.pipeline.roleplay import (
+    GROUP_MAX_USER_TURNS,
     PERSONAS,
     MockRoleplayLLMProvider,
     RoleplayTurnData,
     get_persona,
     get_roleplay_llm_provider,
+    pick_next_persona,
 )
 
 
@@ -17,6 +19,11 @@ def test_persona_catalog_has_at_least_one_persona() -> None:
         assert p.opening_line
         assert p.closing_line
         assert len(p.follow_ups) > 0
+
+
+def test_persona_catalog_has_multiple_distinct_personas_for_multi_mode() -> None:
+    assert len(PERSONAS) >= 3
+    assert len({p.id for p in PERSONAS}) == len(PERSONAS)
 
 
 def test_get_persona_known_id() -> None:
@@ -66,3 +73,27 @@ def test_get_roleplay_llm_provider_mock() -> None:
 def test_get_roleplay_llm_provider_unknown_raises() -> None:
     with pytest.raises(NotImplementedError):
         get_roleplay_llm_provider("openai")
+
+
+def test_pick_next_persona_round_robins() -> None:
+    personas = list(PERSONAS[:3])
+    assert pick_next_persona(personas, user_turn_count=1) is personas[0]
+    assert pick_next_persona(personas, user_turn_count=2) is personas[1]
+    assert pick_next_persona(personas, user_turn_count=3) is personas[2]
+    assert pick_next_persona(personas, user_turn_count=4) is personas[0]
+
+
+def test_reply_uses_max_user_turns_override_for_group_mode() -> None:
+    persona = get_persona("skeptical_stakeholder")  # max_user_turns=3
+    history = [RoleplayTurnData(speaker="user", text="we should ship it")]
+    # Without override, turn 3 would already close (persona.max_user_turns == 3);
+    # with a higher group override it should still be open.
+    reply = MockRoleplayLLMProvider().reply(
+        persona, history, user_turn_count=3, max_user_turns=GROUP_MAX_USER_TURNS
+    )
+    assert reply.is_closing is False
+
+    reply = MockRoleplayLLMProvider().reply(
+        persona, history, user_turn_count=GROUP_MAX_USER_TURNS, max_user_turns=GROUP_MAX_USER_TURNS
+    )
+    assert reply.is_closing is True

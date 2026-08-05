@@ -274,12 +274,13 @@ export interface RoleplayPersonaOut {
 export interface RoleplayTurnOut {
   turn_index: number;
   speaker: "user" | "persona";
+  persona_id: string | null;
   text: string;
 }
 
 export interface RoleplaySessionOut {
   id: string;
-  persona_id: string;
+  persona_ids: string[];
   scenario: string;
   status: string;
   turns: RoleplayTurnOut[];
@@ -290,20 +291,20 @@ export interface SubmitRoleplayTurnResponse {
   new_turns: RoleplayTurnOut[];
 }
 
-/** §4.2 voice AI roleplay, single persona, turn-based. */
+/** §4.2 voice AI roleplay — single- and multi-persona, turn-based. */
 export async function fetchRoleplayPersonas(): Promise<RoleplayPersonaOut[]> {
   const res = await fetch(`${API_BASE}/roleplay-personas`);
   return asJson<RoleplayPersonaOut[]>(res);
 }
 
 export async function createRoleplaySession(
-  personaId: string,
+  personaIds: string[],
   userId?: string,
 ): Promise<RoleplaySessionOut> {
   const res = await fetch(`${API_BASE}/roleplay-sessions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ persona_id: personaId, user_id: userId ?? null }),
+    body: JSON.stringify({ persona_ids: personaIds, user_id: userId ?? null }),
   });
   return asJson<RoleplaySessionOut>(res);
 }
