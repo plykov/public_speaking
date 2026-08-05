@@ -309,3 +309,12 @@ class SharedViewOut(BaseModel):
     can_view_transcripts: bool
     can_view_feedback: bool
     attempts: list[SharedAttemptOut]
+
+
+class ExemplarOut(BaseModel):
+    """§4.2 exemplar mode: a stronger version of the attempt + the delta."""
+
+    original_text: str
+    rewritten_text: str
+    explanation: list[str]
+    model_version: str

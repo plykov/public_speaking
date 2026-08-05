@@ -87,6 +87,7 @@ upload (chunked, resumable) → normalize → STT → deterministic metrics
 | `api.l1_calibration` | §4.2 | Catalog of nine L1 calibration profiles (RU/NL/DE/FR/ES/PT-BR/ZH/HI/JA) — real, authored content, no vendor dependency |
 | `api.slides` | §4.2 | PDF page count + thumbnail rendering (PyMuPDF) — real, deterministic, no vendor dependency (AGPL license caveat noted in the Phase 2 section) |
 | `api.sharing` | §4.2 | Token generation + expiry/revocation check for coach/manager share links — real, no vendor dependency |
+| `api.pipeline.exemplar` | §4.2 | Exemplar-mode seam + mock (same pattern as STT/LLM/billing) — real rewrite quality needs a frontier model, not available in this environment |
 
 ### Data model (§6.4)
 
@@ -337,6 +338,33 @@ generated `/share/{token}` URL and confirmed the metrics + feedback
 rendered, revoked the link from `/settings`, and confirmed the same URL
 now shows a clear "revoked or expired" message instead of a raw 410.
 
+### Exemplar mode (§4.2 — "show a stronger version and explain the delta")
+
+Same seam-plus-mock pattern as STT/LLM/billing: `api/pipeline/exemplar.py`
+defines an `ExemplarProvider` interface a real frontier-model integration
+would implement (compose a genuinely stronger, more naturally-phrased
+rewrite). `MockExemplarProvider` is deliberately *not* a language model —
+it only **reorders and removes what the speaker already said**: it moves
+the sentence containing a recognized recommendation marker
+(`metrics.point_position`'s detector) to the front, and strips detected
+hedge phrases (`metrics.hedging`'s detector), reusing the exact same
+deterministic detectors already in the pipeline rather than duplicating
+logic. This is stated as a mechanical demonstration of the "show the
+delta" UX, not a claim about rewrite quality — the frontend panel says so
+directly rather than passing the mock off as a real rewrite.
+
+| Endpoint | Behavior |
+|---|---|
+| `GET /sessions/{id}/exemplar` | Computed on demand from the stored transcript (not persisted — cheap to recompute, never stale after a §4.1 M8 transcript correction). 400 if the session has no transcript yet |
+
+**Frontend**: `ExemplarPanel.tsx` — a "Show a stronger version" button on
+both the baseline and retry scorecards reveals the original text, the
+rewritten text, and a bulleted "what changed" list. Verified live: recorded
+a baseline attempt with a hedge and a trailing recommendation, clicked
+through, and confirmed the panel correctly moved the recommendation
+sentence first and stripped the hedge, with an accurate explanation of
+both changes.
+
 ### Privacy controls (§4.1 M11, §6.5)
 
 | Endpoint | Behavior |
@@ -531,10 +559,13 @@ environment allows; going further on those means real vendor
 credentials (Stripe, AssemblyAI/Deepgram, a frontier LLM) this
 environment doesn't have. Web Push, L1 calibration profiles,
 slide/PDF-linked transcripts, and coach/manager share links (all §4.2)
-are the four Phase 2 items completed so far — all genuinely real, no
-vendor gap (slides carry a stated PyMuPDF license caveat, not a
-functionality gap). Everything else in Phase 2/3 (voice roleplay,
-exemplar mode, calendar integration, team workspaces) is still ahead.
+are genuinely real, no vendor gap (slides carry a stated PyMuPDF license
+caveat, not a functionality gap). Exemplar mode (§4.2) uses the same
+seam-plus-mock pattern as STT/LLM/billing: the plumbing is real, but a
+truly stronger *rewrite* needs a frontier model this environment doesn't
+have, so the mock only reorders/de-hedges what was actually said and says
+so in the UI. Everything else in Phase 2/3 (voice roleplay, calendar
+integration, team workspaces) is still ahead.
 
 ## Testing
 
@@ -546,4 +577,4 @@ pytest --cov=metrics --cov=api --cov-report=term-missing
 cd web && npx tsc --noEmit && npm run lint && npm run build
 ```
 
-221 backend tests, 99% line coverage as of this commit.
+231 backend tests, 99% line coverage as of this commit.

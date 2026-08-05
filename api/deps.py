@@ -6,6 +6,7 @@ from functools import lru_cache
 
 from api.billing import BillingProvider, get_billing_provider
 from api.config import settings
+from api.pipeline.exemplar import ExemplarProvider, get_exemplar_provider
 from api.pipeline.llm import LLMRubricProvider, get_llm_provider
 from api.pipeline.normalize import AudioNormalizer, PassthroughNormalizer
 from api.pipeline.stt import STTProvider, get_stt_provider
@@ -35,3 +36,8 @@ def get_llm() -> LLMRubricProvider:
 @lru_cache
 def get_billing() -> BillingProvider:
     return get_billing_provider(settings.billing_provider)
+
+
+@lru_cache
+def get_exemplar() -> ExemplarProvider:
+    return get_exemplar_provider(settings.exemplar_provider)

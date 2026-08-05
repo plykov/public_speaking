@@ -8,6 +8,7 @@ import { DevTranscriptPicker } from "@/components/DevTranscriptPicker";
 import { Scorecard } from "@/components/Scorecard";
 import { EditableTranscript } from "@/components/EditableTranscript";
 import { SlideDeckPanel } from "@/components/SlideDeckPanel";
+import { ExemplarPanel } from "@/components/ExemplarPanel";
 import {
   createSession,
   analyzeSession,
@@ -210,6 +211,7 @@ function PracticeStudioInner() {
             slideTransitions={slideTransitions}
           />
           <EditableTranscript sessionId={baselineResult.session_id} onReanalyzed={setBaselineResult} />
+          <ExemplarPanel sessionId={baselineResult.session_id} />
           <button className="btn btn-primary" onClick={() => setStep("drill-record")}>
             Try the drill: {baselineResult.drill.title}
           </button>
@@ -235,6 +237,7 @@ function PracticeStudioInner() {
             onRate={(id, useful) => handleRate("retry", id, useful)}
           />
           <EditableTranscript sessionId={retryResult.session_id} onReanalyzed={setRetryResult} />
+          <ExemplarPanel sessionId={retryResult.session_id} />
           <button
             className="btn"
             onClick={() => {

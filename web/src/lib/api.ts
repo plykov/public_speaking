@@ -249,6 +249,19 @@ export async function getResult(sessionId: string): Promise<AnalysisResultOut> {
   return asJson<AnalysisResultOut>(res);
 }
 
+export interface ExemplarOut {
+  original_text: string;
+  rewritten_text: string;
+  explanation: string[];
+  model_version: string;
+}
+
+/** §4.2 exemplar mode: a stronger version of the attempt + the delta. */
+export async function fetchExemplar(sessionId: string): Promise<ExemplarOut> {
+  const res = await fetch(`${API_BASE}/sessions/${sessionId}/exemplar`);
+  return asJson<ExemplarOut>(res);
+}
+
 export async function deleteSession(sessionId: string): Promise<void> {
   await fetch(`${API_BASE}/sessions/${sessionId}`, { method: "DELETE" });
 }

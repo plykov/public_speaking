@@ -30,14 +30,17 @@ from api.db import (
     User,
     get_db,
 )
+from api.deps import get_exemplar as get_exemplar_dep
 from api.deps import get_llm, get_normalizer, get_object_store, get_stt
 from api.lifecycle import delete_session_data
+from api.pipeline.exemplar import ExemplarProvider
 from api.pipeline.llm import ScenarioRubric
 from api.pipeline.orchestrator import PipelineResult, run_pipeline, score_words
 from api.schemas import (
     AnalysisResultOut,
     CreateSessionRequest,
     DrillOut,
+    ExemplarOut,
     FeedbackItemOut,
     SessionOut,
     TranscriptWordOut,
@@ -46,6 +49,7 @@ from api.schemas import (
 )
 from api.storage import ObjectStore, UploadConflict
 from metrics.models import Word
+from metrics.text_utils import split_sentences
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -306,6 +310,38 @@ def get_transcript(session_id: str, db: OrmSession = Depends(get_db)) -> list[Tr
         .filter_by(session_id=session_id)
         .order_by(TranscriptWord.seq_index)
         .all()
+    )
+
+
+@router.get("/{session_id}/exemplar", response_model=ExemplarOut)
+def get_exemplar(
+    session_id: str,
+    db: OrmSession = Depends(get_db),
+    exemplar: ExemplarProvider = Depends(get_exemplar_dep),
+) -> ExemplarOut:
+    """§4.2 exemplar mode: a stronger version of the attempt + the delta.
+
+    Computed on demand from the stored transcript rather than persisted —
+    cheap to recompute, and never stale relative to transcript corrections.
+    """
+    _get_session_or_404(session_id, db)
+    words_rows = (
+        db.query(TranscriptWord)
+        .filter_by(session_id=session_id)
+        .order_by(TranscriptWord.seq_index)
+        .all()
+    )
+    if not words_rows:
+        raise HTTPException(status_code=400, detail="session has no transcript yet")
+
+    words = [Word(text=w.text, start_ms=w.start_ms, end_ms=w.end_ms, confidence=w.confidence) for w in words_rows]
+    sentences = split_sentences(words)
+    result = exemplar.generate(words, sentences)
+    return ExemplarOut(
+        original_text=result.original_text,
+        rewritten_text=result.rewritten_text,
+        explanation=result.explanation,
+        model_version=result.model_version,
     )
 
 
