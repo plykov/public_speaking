@@ -14,6 +14,7 @@ class Settings:
     llm_provider: str = os.environ.get("LLM_PROVIDER", "mock")
     billing_provider: str = os.environ.get("BILLING_PROVIDER", "mock")
     exemplar_provider: str = os.environ.get("EXEMPLAR_PROVIDER", "mock")
+    roleplay_llm_provider: str = os.environ.get("ROLEPLAY_LLM_PROVIDER", "mock")
     rubric_version: str = os.environ.get("RUBRIC_VERSION", "rubric-v1")
     model_version: str = os.environ.get("MODEL_VERSION", "mock-llm-v1")
     cors_allow_origins: tuple[str, ...] = tuple(

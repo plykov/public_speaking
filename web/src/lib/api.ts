@@ -4,6 +4,8 @@
  * dev server or a deployed API.
  */
 
+import type { SampleWord } from "@/lib/sampleTranscripts";
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export interface UserOut {
@@ -260,6 +262,62 @@ export interface ExemplarOut {
 export async function fetchExemplar(sessionId: string): Promise<ExemplarOut> {
   const res = await fetch(`${API_BASE}/sessions/${sessionId}/exemplar`);
   return asJson<ExemplarOut>(res);
+}
+
+export interface RoleplayPersonaOut {
+  id: string;
+  name: string;
+  role: string;
+  description: string;
+}
+
+export interface RoleplayTurnOut {
+  turn_index: number;
+  speaker: "user" | "persona";
+  text: string;
+}
+
+export interface RoleplaySessionOut {
+  id: string;
+  persona_id: string;
+  scenario: string;
+  status: string;
+  turns: RoleplayTurnOut[];
+}
+
+export interface SubmitRoleplayTurnResponse {
+  session_status: string;
+  new_turns: RoleplayTurnOut[];
+}
+
+/** §4.2 voice AI roleplay, single persona, turn-based. */
+export async function fetchRoleplayPersonas(): Promise<RoleplayPersonaOut[]> {
+  const res = await fetch(`${API_BASE}/roleplay-personas`);
+  return asJson<RoleplayPersonaOut[]>(res);
+}
+
+export async function createRoleplaySession(
+  personaId: string,
+  userId?: string,
+): Promise<RoleplaySessionOut> {
+  const res = await fetch(`${API_BASE}/roleplay-sessions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ persona_id: personaId, user_id: userId ?? null }),
+  });
+  return asJson<RoleplaySessionOut>(res);
+}
+
+export async function submitRoleplayTurn(
+  sessionId: string,
+  words: SampleWord[],
+): Promise<SubmitRoleplayTurnResponse> {
+  const res = await fetch(`${API_BASE}/roleplay-sessions/${sessionId}/turns`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(words),
+  });
+  return asJson<SubmitRoleplayTurnResponse>(res);
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {

@@ -23,6 +23,8 @@ from api.db import (
     PracticeSession,
     PushSubscription,
     Reminder,
+    RoleplaySession,
+    RoleplayTurn,
     ShareLink,
     SlideDeck,
     SlideTransition,
@@ -76,6 +78,12 @@ def delete_user_data(db: OrmSession, store: ObjectStore, user_id: str) -> None:
     db.query(L1Profile).filter_by(user_id=user_id).delete()
     db.query(Reminder).filter_by(user_id=user_id).delete()
     db.query(ShareLink).filter_by(user_id=user_id).delete()
+    roleplay_session_ids = [
+        r.id for r in db.query(RoleplaySession.id).filter_by(user_id=user_id).all()
+    ]
+    for rid in roleplay_session_ids:
+        db.query(RoleplayTurn).filter_by(roleplay_session_id=rid).delete()
+    db.query(RoleplaySession).filter_by(user_id=user_id).delete()
     db.query(PushSubscription).filter_by(user_id=user_id).delete()
     db.query(CheckoutSession).filter_by(user_id=user_id).delete()
     db.query(Subscription).filter_by(user_id=user_id).delete()

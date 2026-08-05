@@ -328,6 +328,35 @@ class ShareLink(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class RoleplaySession(Base):
+    """§4.2 — one turn-based voice roleplay conversation with a persona."""
+
+    __tablename__ = "roleplay_sessions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    persona_id: Mapped[str] = mapped_column(String)
+    scenario: Mapped[str] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String, default="active")  # "active" | "completed"
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class RoleplayTurn(Base):
+    """§4.2 — one line of dialogue, either side. `speaker` is "user" or
+    "persona"; user turns carry the STT-transcribed text of a real
+    recording, persona turns are the (mock or real) LLM's reply text,
+    spoken client-side via the browser's SpeechSynthesis API."""
+
+    __tablename__ = "roleplay_turns"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    roleplay_session_id: Mapped[str] = mapped_column(ForeignKey("roleplay_sessions.id"))
+    turn_index: Mapped[int] = mapped_column(Integer)
+    speaker: Mapped[str] = mapped_column(String)
+    text: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 _engine = create_engine(
     settings.database_url,
     connect_args={"check_same_thread": False} if settings.database_url.startswith("sqlite") else {},

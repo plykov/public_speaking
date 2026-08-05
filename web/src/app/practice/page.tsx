@@ -179,6 +179,9 @@ function PracticeStudioInner() {
           <button className="btn btn-primary" onClick={() => setStep("baseline-record")}>
             Start baseline recording
           </button>
+          <Link href="/roleplay" className="pill" style={{ width: "fit-content" }}>
+            Or try a voice roleplay →
+          </Link>
         </div>
       )}
 

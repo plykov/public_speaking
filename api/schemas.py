@@ -318,3 +318,37 @@ class ExemplarOut(BaseModel):
     rewritten_text: str
     explanation: list[str]
     model_version: str
+
+
+class RoleplayPersonaOut(BaseModel):
+    id: str
+    name: str
+    role: str
+    description: str
+
+
+class CreateRoleplaySessionRequest(BaseModel):
+    persona_id: str
+    scenario: str = "roleplay"
+    user_id: str | None = None
+
+
+class RoleplayTurnOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    turn_index: int
+    speaker: str
+    text: str
+
+
+class RoleplaySessionOut(BaseModel):
+    id: str
+    persona_id: str
+    scenario: str
+    status: str
+    turns: list[RoleplayTurnOut]
+
+
+class SubmitRoleplayTurnResponse(BaseModel):
+    session_status: str
+    new_turns: list[RoleplayTurnOut]
