@@ -84,13 +84,14 @@ upload (chunked, resumable) → normalize → STT → deterministic metrics
 | `api.streaks` | §4.1 M10 | `compute_streak()` — pure function, no DB access, same "pure core" pattern as `metrics/` |
 | `api.billing` | §4.1 M12, §8.1 | Entitlement logic (`effective_tier()`, `quota_exceeded()`) plus the no-real-Stripe provider seam — same pattern as `api.pipeline.stt` / `api.pipeline.llm` |
 | `api.push` | §4.2 | Real Web Push send (VAPID keys + `pywebpush`) — genuinely delivers, unlike the STT/LLM/Stripe seams; the gap is scheduling *when* to send, not the send itself |
+| `api.l1_calibration` | §4.2 | Catalog of nine L1 calibration profiles (RU/NL/DE/FR/ES/PT-BR/ZH/HI/JA) — real, authored content, no vendor dependency |
 
 ### Data model (§6.4)
 
 | Table | §6.4 entity | Notes |
 |---|---|---|
 | `User` | `user` | Anonymous, device-scoped — no email/password. Auth is explicitly out of scope; the client holds the id (localStorage) |
-| `L1Profile` | `l1_profile` | First language + self-declared confidence. Read only by onboarding copy and the dev-mode sample-transcript picker — **never** by `api/pipeline/llm.py` or `metrics/report.py` |
+| `L1Profile` | `l1_profile` | First language + self-declared confidence, plus an optional §4.2 `first_language_code` for the L1 calibration catalog. Read only by onboarding copy and the dev-mode sample-transcript picker — **never** by `api/pipeline/llm.py` or `metrics/report.py` |
 | `PracticeSession` | `session` | Adds `user_id` and a self-referencing `parent_session_id` — a retry session points at the baseline it followed, which is §6.4's `attempt_link` relationship without a separate join table |
 | `MediaAsset` | `media_asset` | Unchanged — storage key only, never the audio bytes |
 | `TranscriptWord` | `transcript_segment` | Word-level: text, start/end ms, confidence, sequence index |
@@ -227,6 +228,32 @@ on an old/distro-patched `pip`+`setuptools` combo (a `distutils`
 on it, upgrade `pip`/`setuptools`/`wheel` first (ideally in a venv) and
 retry.
 
+### L1 calibration profiles (§4.2 — "Additional L1 calibration profiles")
+
+Phase 1's onboarding stored "first language" as free text, shown back
+verbatim but taught the product nothing. `api/l1_calibration.py` adds a
+curated catalog for the nine languages named in scope (RU, NL, DE, FR, ES,
+PT-BR, ZH, HI, JA): each has a short, hedged calibration note about a
+documented L1→English transfer pattern relevant to meeting speech (e.g.
+topic-comment ordering, discourse register, hedging carried over from a more
+deferential first-language register) — never a claim about accent,
+intelligence, or "correctness." Same non-negotiable as before: **this is
+onboarding copy only** — `api/pipeline/llm.py` and `metrics/report.py` never
+read `L1Profile`, and adding a code here doesn't change that.
+
+| Endpoint | Behavior |
+|---|---|
+| `GET /l1-calibration-profiles` | The catalog: code, label, calibration note |
+| `PUT /users/{id}/l1-profile` | Now also accepts `first_language_code`; response includes a derived `calibration_note` (not stored — computed from the code on every read, so editing the catalog text doesn't require a data migration) |
+
+**Frontend**: onboarding's first-language field (`web/src/app/onboarding/page.tsx`)
+is now a chip picker fetched from the catalog, showing the relevant
+calibration note the moment a language is picked, plus an "Other / prefer
+not to say" option that falls back to the original free-text input — nobody
+outside the nine-language catalog loses the ability to onboard. Verified
+live: picking Russian shows its note, switching to Other reveals the text
+field, and submission reaches the recorder either way.
+
 ### Privacy controls (§4.1 M11, §6.5)
 
 | Endpoint | Behavior |
@@ -337,7 +364,10 @@ backend above.
   `POST /users` + `PUT /users/{id}/l1-profile`, stores the returned user
   id in `localStorage` (`src/lib/localUser.ts`), and hands off into the
   same baseline-recording flow with the context preselected via a query
-  param — no duplicate context picker.
+  param — no duplicate context picker. The first-language field is now a
+  chip picker sourced from `GET /l1-calibration-profiles` (§4.2), showing
+  a calibration note the moment a language is picked; an "Other / prefer
+  not to say" chip falls back to free text for anyone outside the catalog.
 - Flow implemented: onboarding → baseline recording → scorecard (one
   strength, up to three evidence-linked priorities each with a
   useful/not-useful rating, one drill) → retry the drill → before/after
@@ -416,13 +446,11 @@ provider-seam-plus-mock pattern), and calendar integration. Every §4.1
 MVP checklist item (M1-M12) is complete at the mock/seam level this
 environment allows; going further on those means real vendor
 credentials (Stripe, AssemblyAI/Deepgram, a frontier LLM) this
-environment doesn't have. Web Push (§4.2) is the one Phase 2 item
-started so far, and unlike the others above, its send path is
-genuinely real — see the Phase 2 section for what was verified live
-and what a sandboxed test browser couldn't reach. Everything else in
-Phase 2/3 (voice roleplay, exemplar mode, coach share links,
-slide/PDF-linked transcripts, additional L1 profiles, calendar
-integration, team workspaces) is still ahead.
+environment doesn't have. Web Push (§4.2) and L1 calibration profiles (§4.2) are the two Phase 2
+items completed so far — both genuinely real, no vendor gap. Everything
+else in Phase 2/3 (voice roleplay, exemplar mode, coach share links,
+slide/PDF-linked transcripts, calendar integration, team workspaces) is
+still ahead.
 
 ## Testing
 
@@ -434,4 +462,4 @@ pytest --cov=metrics --cov=api --cov-report=term-missing
 cd web && npx tsc --noEmit && npm run lint && npm run build
 ```
 
-171 backend tests, 99% line coverage as of this commit.
+180 backend tests, 99% line coverage as of this commit.

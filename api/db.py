@@ -83,6 +83,9 @@ class L1Profile(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), unique=True)
     first_language: Mapped[str] = mapped_column(String)
     self_declared_confidence: Mapped[str] = mapped_column(String)  # e.g. "building"|"comfortable"|"fluent"
+    # §4.2: a catalog code (see api/l1_calibration.py) when the user picked a
+    # known L1 background; None for free-text-only or "prefer not to say".
+    first_language_code: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     user: Mapped[User] = relationship(back_populates="l1_profile")

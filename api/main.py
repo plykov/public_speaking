@@ -14,6 +14,7 @@ from api.routers.billing import router as billing_router
 from api.routers.feedback import router as feedback_router
 from api.routers.push import router as push_router
 from api.routers.sessions import router as sessions_router
+from api.routers.users import catalog_router as l1_catalog_router
 from api.routers.users import router as users_router
 
 
@@ -37,6 +38,7 @@ app.add_middleware(
 
 app.include_router(sessions_router)
 app.include_router(users_router)
+app.include_router(l1_catalog_router)
 app.include_router(feedback_router)
 app.include_router(admin_router)
 app.include_router(billing_router)

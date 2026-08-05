@@ -16,6 +16,14 @@ export interface L1ProfileOut {
   user_id: string;
   first_language: string;
   self_declared_confidence: string;
+  first_language_code: string | null;
+  calibration_note: string | null;
+}
+
+export interface L1CalibrationProfileOut {
+  code: string;
+  label: string;
+  calibration_note: string;
 }
 
 export interface SessionOut {
@@ -129,6 +137,7 @@ export async function upsertL1Profile(
   userId: string,
   firstLanguage: string,
   selfDeclaredConfidence: string,
+  firstLanguageCode: string | null = null,
 ): Promise<L1ProfileOut> {
   const res = await fetch(`${API_BASE}/users/${userId}/l1-profile`, {
     method: "PUT",
@@ -136,9 +145,15 @@ export async function upsertL1Profile(
     body: JSON.stringify({
       first_language: firstLanguage,
       self_declared_confidence: selfDeclaredConfidence,
+      first_language_code: firstLanguageCode,
     }),
   });
   return asJson<L1ProfileOut>(res);
+}
+
+export async function fetchL1CalibrationProfiles(): Promise<L1CalibrationProfileOut[]> {
+  const res = await fetch(`${API_BASE}/l1-calibration-profiles`);
+  return asJson<L1CalibrationProfileOut[]>(res);
 }
 
 export async function createSession(

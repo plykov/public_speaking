@@ -21,6 +21,7 @@ class UserOut(BaseModel):
 class CreateL1ProfileRequest(BaseModel):
     first_language: str
     self_declared_confidence: str  # e.g. "building" | "comfortable" | "fluent" — copy/calibration only
+    first_language_code: str | None = None  # §4.2: catalog code, e.g. "ru" — see api/l1_calibration.py
 
 
 class L1ProfileOut(BaseModel):
@@ -30,6 +31,14 @@ class L1ProfileOut(BaseModel):
     user_id: str
     first_language: str
     self_declared_confidence: str
+    first_language_code: str | None = None
+    calibration_note: str | None = None  # §4.2 — derived from first_language_code, never stored
+
+
+class L1CalibrationProfileOut(BaseModel):
+    code: str
+    label: str
+    calibration_note: str
 
 
 class CreateSessionRequest(BaseModel):
