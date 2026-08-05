@@ -91,6 +91,7 @@ upload (chunked, resumable) → normalize → STT → deterministic metrics
 | `api.pipeline.roleplay` | §4.2 | Persona catalog (3) + roleplay-reply seam/mock + multi-persona round-robin turn-picking. STT reused for real from `api.pipeline.stt`; TTS is genuinely real via the browser's `SpeechSynthesis` API, no mock needed |
 | `api.calendar` | §4.2 | Calendar-connection seam/mock (real Google/Microsoft OAuth needs an app registration not available here) + genuinely real imminent-event-to-drill matching |
 | `api.routers.teams` | §4.3 | Team workspaces, membership/roles (not enforced — no auth system exists), invites, custom scenarios (real) + custom rubrics (stored, not yet consumed by scoring) |
+| `api.analytics` | §4.3 | Manager aggregate analytics — team/per-member metric averages; no field capable of carrying raw recordings/transcripts, by construction |
 
 ### Data model (§6.4)
 
@@ -578,6 +579,28 @@ created a team in context 1, generated an invite link, opened it in
 context 2 (a different anonymous user), accepted it, and confirmed both
 members now appear in the roster from either context.
 
+### Manager aggregate analytics (§4.3 — "recording access off by default")
+
+`api/analytics.py` computes team-level and per-member aggregates (average
+words/min, filler rate, hedging rate, point-position score) from
+already-computed `metrics_summary` data — no new metric, no model call.
+"Off by default" is implemented as an absolute rather than a defaulted-off
+toggle: `AttemptMetrics`/`MemberAnalytics`/`TeamAnalytics` have no field
+capable of carrying a recording, transcript, or feedback item at all —
+verified by a test that asserts the dataclass's field set directly, and
+an API test that greps the full JSON response for "transcript",
+"feedback_items", "audio", and "media" and asserts none appear.
+
+| Endpoint | Behavior |
+|---|---|
+| `GET /teams/{id}/analytics` | Team + per-member aggregates. A member with zero attempts still appears with `attempt_count: 0` rather than being silently omitted |
+
+**Frontend**: the `/team` page's "Manager analytics" card shows the
+aggregate tiles + a per-member attempt-count/avg-WPM row. Verified live:
+created a team, practiced one session, and confirmed the dashboard
+reflected the real computed metrics (300 wpm, 1 attempt) rather than
+placeholder data.
+
 ## `web/` — Practice Studio (§4.1 M1/M2, §5 first-session flow)
 
 A real Next.js frontend, not fake data — it drives the actual FastAPI
@@ -714,4 +737,4 @@ pytest --cov=metrics --cov=api --cov-report=term-missing
 cd web && npx tsc --noEmit && npm run lint && npm run build
 ```
 
-310 backend tests, 99% line coverage as of this commit.
+321 backend tests, 99% line coverage as of this commit.
