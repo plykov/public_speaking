@@ -15,12 +15,14 @@ from sqlalchemy.orm import Session as OrmSession
 
 from api.db import (
     AnalysisResult,
+    CheckoutSession,
     FeedbackItemRow,
     L1Profile,
     MediaAsset,
     MetricEventRow,
     PracticeSession,
     Reminder,
+    Subscription,
     TranscriptCorrection,
     TranscriptWord,
     User,
@@ -54,12 +56,14 @@ def delete_session_data(db: OrmSession, store: ObjectStore, session_id: str) -> 
 
 def delete_user_data(db: OrmSession, store: ObjectStore, user_id: str) -> None:
     """Account delete: every session's data, the L1 profile, reminder
-    preference, and the user row."""
+    preference, subscription/billing records, and the user row."""
     session_ids = [s.id for s in db.query(PracticeSession.id).filter_by(user_id=user_id).all()]
     for session_id in session_ids:
         delete_session_data(db, store, session_id)
     db.query(L1Profile).filter_by(user_id=user_id).delete()
     db.query(Reminder).filter_by(user_id=user_id).delete()
+    db.query(CheckoutSession).filter_by(user_id=user_id).delete()
+    db.query(Subscription).filter_by(user_id=user_id).delete()
     db.query(User).filter_by(id=user_id).delete()
 
 

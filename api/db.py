@@ -105,6 +105,41 @@ class Reminder(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class Subscription(Base):
+    """§4.1 M12, §8.1 commercial model.
+
+    A user with no row here (or an expired `event_sprint`) is on the
+    free tier by construction — see `api.billing.effective_tier()`. No
+    real Stripe integration exists; `checkout_session_id` /
+    `provider_customer_id` are seams for one, populated by
+    `api.billing.MockBillingProvider` today.
+    """
+
+    __tablename__ = "subscriptions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), unique=True)
+    tier: Mapped[str] = mapped_column(String, default="free")  # free|pro|event_sprint|team
+    status: Mapped[str] = mapped_column(String, default="active")  # active|canceled
+    current_period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    provider_customer_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class CheckoutSession(Base):
+    """A pending mock checkout — created by `POST /users/{id}/checkout`,
+    resolved by `POST /billing/checkout/{id}/confirm` standing in for a
+    Stripe webhook (§6.1: no payment provider is wired up here)."""
+
+    __tablename__ = "checkout_sessions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    tier: Mapped[str] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String, default="pending")  # pending|completed
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class PracticeSession(Base):
     __tablename__ = "sessions"
 
