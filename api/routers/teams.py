@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session as OrmSession
 
 from api.analytics import AttemptMetrics, compute_team_analytics
 from api.audit import log_audit_event
+from api.deps import get_sso
 from api.db import (
     AnalysisResult,
     AuditLogEntry,
@@ -41,6 +42,9 @@ from api.schemas import (
     CreateTeamScenarioRequest,
     MemberAnalyticsOut,
     RetentionSettingOut,
+    SSOCallbackRequest,
+    SSOCallbackResult,
+    SSOLoginUrlOut,
     TeamAnalyticsOut,
     TeamInviteOut,
     TeamMemberOut,
@@ -52,6 +56,7 @@ from api.schemas import (
     UpdateRetentionRequest,
 )
 from api.sharing import generate_token
+from api.sso import SSOProvider
 
 router = APIRouter(tags=["teams"])
 
@@ -411,4 +416,68 @@ def get_team_audit_log(team_id: str, db: OrmSession = Depends(get_db)) -> list[A
         .filter_by(team_id=team_id)
         .order_by(AuditLogEntry.created_at.desc())
         .all()
+    )
+
+
+@router.get("/teams/{team_id}/sso/login-url", response_model=SSOLoginUrlOut)
+def get_sso_login_url(
+    team_id: str,
+    redirect_uri: str = "https://app.example/sso/callback",
+    db: OrmSession = Depends(get_db),
+    sso: SSOProvider = Depends(get_sso),
+) -> SSOLoginUrlOut:
+    """§4.3 SSO — mocked (see api/sso.py): a real deployment redirects the
+    browser to this URL, which points at a real IdP's login page."""
+    _get_team_or_404(team_id, db)
+    return SSOLoginUrlOut(authorization_url=sso.build_authorization_url(team_id, redirect_uri))
+
+
+@router.post("/teams/{team_id}/sso/callback", response_model=SSOCallbackResult)
+def sso_callback(
+    team_id: str,
+    body: SSOCallbackRequest,
+    db: OrmSession = Depends(get_db),
+    sso: SSOProvider = Depends(get_sso),
+) -> SSOCallbackResult:
+    """Exchanges an IdP auth code for an identity, then find-or-creates a
+    `User` by `external_id` and ensures team membership — the genuinely
+    real part of SSO login (identity → membership provisioning), sitting
+    behind a mocked code exchange (see api/sso.py)."""
+    _get_team_or_404(team_id, db)
+    try:
+        identity = sso.exchange_code(body.code)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    user = db.query(User).filter_by(external_id=identity.external_id).one_or_none()
+    created_user = False
+    if user is None:
+        user = User(external_id=identity.external_id, email=identity.email)
+        db.add(user)
+        db.flush()
+        created_user = True
+
+    membership = db.query(TeamMembership).filter_by(team_id=team_id, user_id=user.id).one_or_none()
+    created_membership = False
+    if membership is None:
+        membership = TeamMembership(team_id=team_id, user_id=user.id, role="member")
+        db.add(membership)
+        created_membership = True
+
+    log_audit_event(
+        db,
+        team_id=team_id,
+        actor_user_id=user.id,
+        action="team.sso.login",
+        target_type="user",
+        target_id=user.id,
+        detail={"created_user": created_user, "created_membership": created_membership},
+    )
+    db.commit()
+    return SSOCallbackResult(
+        user_id=user.id,
+        team_id=team_id,
+        role=membership.role,
+        created_user=created_user,
+        created_membership=created_membership,
     )

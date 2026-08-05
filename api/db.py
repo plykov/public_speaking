@@ -65,6 +65,12 @@ class User(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    # §4.3 SSO/SCIM: populated only when a user is provisioned via SCIM or
+    # linked via an SSO login — null for the ordinary anonymous flow.
+    # `external_id` is the IdP's stable identifier; unique so SCIM's
+    # find-or-create can look a user up by it.
+    external_id: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
+    email: Mapped[str | None] = mapped_column(String, nullable=True)
 
     l1_profile: Mapped["L1Profile | None"] = relationship(back_populates="user", uselist=False)
 

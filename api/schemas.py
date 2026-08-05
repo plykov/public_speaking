@@ -519,6 +519,23 @@ class RetentionSettingOut(BaseModel):
     effective_retention_days: int
 
 
+class SSOLoginUrlOut(BaseModel):
+    authorization_url: str
+
+
+class SSOCallbackRequest(BaseModel):
+    code: str
+    redirect_uri: str = "https://app.example/sso/callback"
+
+
+class SSOCallbackResult(BaseModel):
+    user_id: str
+    team_id: str
+    role: str
+    created_user: bool
+    created_membership: bool
+
+
 class AuditLogEntryOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

@@ -93,12 +93,14 @@ upload (chunked, resumable) → normalize → STT → deterministic metrics
 | `api.routers.teams` | §4.3 | Team workspaces, membership/roles (not enforced — no auth system exists), invites, custom scenarios (real) + custom rubrics (stored, not yet consumed by scoring) |
 | `api.analytics` | §4.3 | Manager aggregate analytics — team/per-member metric averages; no field capable of carrying raw recordings/transcripts, by construction |
 | `api.audit` | §4.3 | One-function audit-log helper — appends an immutable `AuditLogEntry`, no other logic |
+| `api.sso` | §4.3 | SSO login seam/mock — real SAML/OIDC needs an IdP app registration not available here |
+| `api.routers.scim` | §4.3 | SCIM 2.0 user provisioning — genuinely real, no vendor gap (we're the SCIM server, not a client) |
 
 ### Data model (§6.4)
 
 | Table | §6.4 entity | Notes |
 |---|---|---|
-| `User` | `user` | Anonymous, device-scoped — no email/password. Auth is explicitly out of scope; the client holds the id (localStorage) |
+| `User` | `user` | Anonymous, device-scoped — no email/password. Auth is explicitly out of scope; the client holds the id (localStorage). `external_id`/`email` (§4.3) are populated only for SSO/SCIM-provisioned users, never for the ordinary anonymous flow |
 | `L1Profile` | `l1_profile` | First language + self-declared confidence, plus an optional §4.2 `first_language_code` for the L1 calibration catalog. Read only by onboarding copy and the dev-mode sample-transcript picker — **never** by `api/pipeline/llm.py` or `metrics/report.py` |
 | `PracticeSession` | `session` | Adds `user_id` and a self-referencing `parent_session_id` — a retry session points at the baseline it followed, which is §6.4's `attempt_link` relationship without a separate join table |
 | `MediaAsset` | `media_asset` | Unchanged — storage key only, never the audio bytes |
@@ -618,6 +620,43 @@ days" reflected it immediately, and saw both the `team.create` and
 `team.retention.update` entries appear in the audit log with correct
 actor/target/detail data.
 
+### SSO/SCIM (§4.3)
+
+The two halves of this item sit at opposite ends of the "how real can
+this get" spectrum:
+
+- **SSO** (`api/sso.py`) — the one item in this whole project with the
+  least workaroundable vendor-credential gap. Real SAML/OIDC needs an
+  actual identity provider (Okta, Azure AD, Google Workspace) with an app
+  registration; there's no client-side trick (unlike Web Push or
+  SpeechSynthesis) that substitutes for a real IdP. `SSOProvider` is the
+  seam a real integration implements; `MockSSOProvider` simulates a
+  successful login deterministically. What's genuinely real underneath it:
+  `POST /teams/{id}/sso/callback` find-or-creates a `User` by the
+  identity's `external_id` and provisions team membership — the actual
+  "identity → membership" mechanics a real IdP integration would also
+  need, exercised end to end by 5 tests.
+- **SCIM** (`api/routers/scim.py`) — **no vendor gap at all**, and the
+  reason is structural: in SCIM, *our app* is the server a real IdP calls
+  into to provision/deprovision users, not a client calling out to
+  someone else's API. Implementing the protocol correctly (RFC 7643/7644)
+  is the whole deliverable, and there's nothing left to mock. A minimal
+  but spec-shaped subset: list/create/read/deactivate/delete for the
+  `User` resource, scoped to one team, with real SCIM response envelopes
+  (`ListResponse`, `Error` with SCIM's schema URNs) that a real IdP could
+  actually parse.
+- Both wire into the same `AuditLogEntry` audit trail as team actions
+  (`team.sso.login`, `team.scim.provision`, `.deactivate`,
+  `.reactivate`, `.deprovision`).
+- `User` gained nullable `external_id`/`email` columns, populated only
+  when a user arrives via SSO or SCIM — the ordinary anonymous
+  onboarding flow never touches them.
+
+No frontend page: like `/admin/purge-expired-media`, this is an
+IT-admin/IdP-configuration surface, not a consumer-facing one — a real
+deployment's admin console (or the IdP's own SCIM/SSO setup UI) would be
+the actual client of these endpoints, not this app's own frontend.
+
 ### Manager aggregate analytics (§4.3 — "recording access off by default")
 
 `api/analytics.py` computes team-level and per-member aggregates (average
@@ -776,4 +815,4 @@ pytest --cov=metrics --cov=api --cov-report=term-missing
 cd web && npx tsc --noEmit && npm run lint && npm run build
 ```
 
-340 backend tests, 99% line coverage as of this commit.
+365 backend tests, 99% line coverage as of this commit.
