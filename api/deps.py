@@ -6,6 +6,7 @@ from functools import lru_cache
 
 from api.billing import BillingProvider, get_billing_provider
 from api.config import settings
+from api.calendar import CalendarProvider, get_calendar_provider
 from api.pipeline.exemplar import ExemplarProvider, get_exemplar_provider
 from api.pipeline.llm import LLMRubricProvider, get_llm_provider
 from api.pipeline.roleplay import RoleplayLLMProvider, get_roleplay_llm_provider
@@ -47,3 +48,8 @@ def get_exemplar() -> ExemplarProvider:
 @lru_cache
 def get_roleplay_llm() -> RoleplayLLMProvider:
     return get_roleplay_llm_provider(settings.roleplay_llm_provider)
+
+
+@lru_cache
+def get_calendar() -> CalendarProvider:
+    return get_calendar_provider(settings.calendar_provider)

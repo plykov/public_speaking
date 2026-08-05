@@ -9,6 +9,7 @@ import { ReminderSettings } from "@/components/ReminderSettings";
 import { BillingSettings } from "@/components/BillingSettings";
 import { PushSettings } from "@/components/PushSettings";
 import { ShareLinkSettings } from "@/components/ShareLinkSettings";
+import { CalendarSettings } from "@/components/CalendarSettings";
 
 export default function Settings() {
   const router = useRouter();
@@ -97,6 +98,8 @@ export default function Settings() {
       <ReminderSettings userId={userId} />
 
       <PushSettings userId={userId} />
+
+      <CalendarSettings userId={userId} />
 
       <ShareLinkSettings userId={userId} />
 

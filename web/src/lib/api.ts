@@ -309,6 +309,42 @@ export async function createRoleplaySession(
   return asJson<RoleplaySessionOut>(res);
 }
 
+export interface CalendarConnectionOut {
+  connected: boolean;
+  provider: string | null;
+}
+
+export interface UpcomingPromptOut {
+  has_prompt: boolean;
+  event_title: string | null;
+  minutes_until: number | null;
+  drill: DrillOut | null;
+}
+
+/** §4.2 calendar integration driving pre-meeting prompts. */
+export async function getCalendarConnection(userId: string): Promise<CalendarConnectionOut> {
+  const res = await fetch(`${API_BASE}/users/${userId}/calendar`);
+  return asJson<CalendarConnectionOut>(res);
+}
+
+export async function connectCalendar(userId: string): Promise<CalendarConnectionOut> {
+  const res = await fetch(`${API_BASE}/users/${userId}/calendar/connect`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider: "mock" }),
+  });
+  return asJson<CalendarConnectionOut>(res);
+}
+
+export async function disconnectCalendar(userId: string): Promise<void> {
+  await fetch(`${API_BASE}/users/${userId}/calendar`, { method: "DELETE" });
+}
+
+export async function fetchUpcomingPrompt(userId: string): Promise<UpcomingPromptOut> {
+  const res = await fetch(`${API_BASE}/users/${userId}/calendar/upcoming-prompt`);
+  return asJson<UpcomingPromptOut>(res);
+}
+
 export async function submitRoleplayTurn(
   sessionId: string,
   words: SampleWord[],

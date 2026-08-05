@@ -364,6 +364,19 @@ class RoleplayTurn(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class CalendarConnection(Base):
+    """§4.2 — whether (and via which mock/real provider) a user has
+    connected a calendar. One row per user; connecting again just
+    updates it (no history of past connections needed)."""
+
+    __tablename__ = "calendar_connections"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), unique=True)
+    provider: Mapped[str] = mapped_column(String)
+    connected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 _engine = create_engine(
     settings.database_url,
     connect_args={"check_same_thread": False} if settings.database_url.startswith("sqlite") else {},

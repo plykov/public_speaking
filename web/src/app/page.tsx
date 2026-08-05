@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { UpcomingPromptBanner } from "@/components/UpcomingPromptBanner";
 
 export default function Home() {
   return (
@@ -8,6 +9,7 @@ export default function Home() {
         Be heard in English meetings. Practice the meeting-fluency skills nobody else
         teaches: interjection, hedging, point-first structure.
       </p>
+      <UpcomingPromptBanner />
       <Link href="/onboarding" className="btn btn-primary" style={{ width: "fit-content" }}>
         Start a practice session
       </Link>

@@ -89,6 +89,7 @@ upload (chunked, resumable) → normalize → STT → deterministic metrics
 | `api.sharing` | §4.2 | Token generation + expiry/revocation check for coach/manager share links — real, no vendor dependency |
 | `api.pipeline.exemplar` | §4.2 | Exemplar-mode seam + mock (same pattern as STT/LLM/billing) — real rewrite quality needs a frontier model, not available in this environment |
 | `api.pipeline.roleplay` | §4.2 | Persona catalog (3) + roleplay-reply seam/mock + multi-persona round-robin turn-picking. STT reused for real from `api.pipeline.stt`; TTS is genuinely real via the browser's `SpeechSynthesis` API, no mock needed |
+| `api.calendar` | §4.2 | Calendar-connection seam/mock (real Google/Microsoft OAuth needs an app registration not available here) + genuinely real imminent-event-to-drill matching |
 
 ### Data model (§6.4)
 
@@ -108,6 +109,7 @@ upload (chunked, resumable) → normalize → STT → deterministic metrics
 | `SlideTransition` | `slide_transitions` | Not a §6.4 entity — "advanced to slide N at elapsed-ms T" marks (§4.2), used client-side to link transcript evidence to a slide |
 | `ShareLink` | `share_links` | Not a §6.4 entity — a coach/manager share link (§4.2): token, three permission flags, optional expiry, soft-delete via `revoked_at` |
 | `RoleplaySession` / `RoleplayTurn` | `roleplay_sessions` / `roleplay_turns` | Not §6.4 entities — a turn-based voice roleplay conversation (§4.2, single- or multi-persona via `persona_ids`) and its dialogue lines (`persona_id` attributes each persona turn). No raw audio ever stored for a turn |
+| `CalendarConnection` | `calendar_connections` | Not a §6.4 entity — whether/which calendar provider (§4.2) a user has connected. One row per user |
 | `Subscription` | `subscription` | Tier/status/period-end for M12 billing — see below. A user with no row (or an expired `event_sprint`) is free-tier by construction, computed in `api.billing.effective_tier()`, never trusted from `.tier` alone |
 | `CheckoutSession` | — | Not a §6.4 entity — a pending mock checkout, resolved by the confirm endpoint standing in for a Stripe webhook |
 | `AnalysisResult` | — | Not a §6.4 entity — a per-attempt stamp of `rubric_version`/`model_version`, the computed metrics summary (kept as JSON: it's a derived aggregate, not a core entity), and a snapshot of the recommended drill |
@@ -423,6 +425,41 @@ mid-conversation; a 2-persona panel round-robinned correctly (Priya →
 Marcus → Priya → Marcus) and closed on the shared turn budget rather than
 per-persona, with each line correctly attributed to the persona who said it.
 
+### Calendar integration driving pre-meeting prompts (§4.2 — "the core retention mechanism")
+
+§8 calls calendar-triggered prompts "the highest-leverage feature in the
+entire document": *"Standup in 40 minutes — one interjection drill?"*
+The vendor gap here is the least workaroundable of any in this project —
+real Google Calendar/Microsoft Graph integration needs an actual OAuth app
+registration (client id/secret, redirect URI, consent screen), which isn't
+something a client-side trick (à la Web Push or SpeechSynthesis) can
+substitute for. So `api/calendar.py` follows the seam-plus-mock pattern
+one more time: `CalendarProvider` is what a real OAuth integration
+implements; `MockCalendarProvider` simulates a successful connection and
+returns two synthetic upcoming events (relative to "now," not
+wall-clock-fixed, so a demo run next week still works).
+
+**What's genuinely real**: matching an imminent event to a practice
+prompt. `next_prompt_worthy_event()` finds the earliest upcoming event
+within a lookahead window (60 min); `guess_drill_criterion()` maps an
+event's title to a relevant drill via simple keyword matching (standup →
+point-first clarity, 1:1 → structure, review → concision), reusing the
+existing `DRILL_CATALOG` (§4.1 M7) rather than inventing a parallel one.
+
+| Endpoint | Behavior |
+|---|---|
+| `POST /users/{id}/calendar/connect` | Simulates a successful connection (mock provider) |
+| `GET /users/{id}/calendar` | Connection status |
+| `DELETE /users/{id}/calendar` | Disconnect |
+| `GET /users/{id}/calendar/upcoming-prompt` | The genuinely real part: is there an imminent event, and if so which drill to suggest. No scheduler exists in this environment (same documented gap as `purge_expired_media`) to turn this into a proactive Web Push notification on its own — it's polled on demand instead (the frontend checks it on page load) |
+
+**Frontend**: `CalendarSettings.tsx` on `/settings` connects/disconnects;
+`UpcomingPromptBanner.tsx` on the home page polls the endpoint and — only
+when a real prompt exists — shows exactly the copy §8 describes, with a
+one-click link into the relevant drill. Verified live: connected the mock
+calendar, then confirmed the home page showed "Team Standup in 30 minutes
+— one-breath recommendation?" with a working link to the drill.
+
 ### Privacy controls (§4.1 M11, §6.5)
 
 | Endpoint | Behavior |
@@ -615,17 +652,20 @@ provider-seam-plus-mock pattern), and calendar integration. Every §4.1
 MVP checklist item (M1-M12) is complete at the mock/seam level this
 environment allows; going further on those means real vendor
 credentials (Stripe, AssemblyAI/Deepgram, a frontier LLM) this
-environment doesn't have. Web Push, L1 calibration profiles,
-slide/PDF-linked transcripts, and coach/manager share links (all §4.2)
-are genuinely real, no vendor gap (slides carry a stated PyMuPDF license
-caveat, not a functionality gap). Exemplar mode and voice roleplay
-(single- and multi-persona, §4.2) use the same seam-plus-mock pattern as
+environment doesn't have. **All eight §4.2 (Phase 2) items are now
+built.** Web Push, L1 calibration profiles, slide/PDF-linked transcripts,
+and coach/manager share links are genuinely real end to end, no vendor
+gap (slides carry a stated PyMuPDF license caveat, not a functionality
+gap). Exemplar mode, voice roleplay (single- and multi-persona), and
+calendar integration use the same seam-plus-mock pattern as
 STT/LLM/billing: the plumbing is real (STT reuse, turn-based state
-machine with round-robin multi-persona turn-taking, browser-native TTS),
-but a truly stronger *rewrite* or *conversational reply* needs a frontier
-model this environment doesn't have, so both mocks are rule-based and say
-so in the UI. Everything else in Phase 2/3 (calendar integration, team
-workspaces) is still ahead.
+machine with round-robin multi-persona turn-taking, browser-native TTS,
+imminent-event-to-drill matching), but a truly stronger *rewrite*,
+*conversational reply*, or *calendar OAuth connection* needs
+infrastructure (a frontier model, a real Google/Microsoft app
+registration) this environment doesn't have, so those specific pieces are
+mocked and say so in the UI. Phase 3 (team workspaces, SSO, LMS,
+consented meeting-recording analysis) is still ahead.
 
 ## Testing
 
@@ -637,4 +677,4 @@ pytest --cov=metrics --cov=api --cov-report=term-missing
 cd web && npx tsc --noEmit && npm run lint && npm run build
 ```
 
-261 backend tests, 99% line coverage as of this commit.
+283 backend tests, 99% line coverage as of this commit.

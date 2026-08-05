@@ -357,3 +357,21 @@ class RoleplaySessionOut(BaseModel):
 class SubmitRoleplayTurnResponse(BaseModel):
     session_status: str
     new_turns: list[RoleplayTurnOut]
+
+
+class ConnectCalendarRequest(BaseModel):
+    provider: str = "mock"
+
+
+class CalendarConnectionOut(BaseModel):
+    connected: bool
+    provider: str | None = None
+
+
+class UpcomingPromptOut(BaseModel):
+    """§4.2 pre-meeting prompt: 'Standup in 40 minutes — one interjection drill?'"""
+
+    has_prompt: bool
+    event_title: str | None = None
+    minutes_until: int | None = None
+    drill: DrillOut | None = None
