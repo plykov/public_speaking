@@ -377,6 +377,75 @@ class CalendarConnection(Base):
     connected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class Team(Base):
+    """§4.3 — a team workspace. Membership/role are tracked, but **not
+    enforced** here: this app has no auth/session system at all (`User`
+    above is anonymous, device-scoped) — a real deployment needs that
+    first. Anyone who knows a team_id and a user_id can currently call
+    admin-labeled endpoints; the role is advisory/UI-level only. Stated
+    plainly rather than pretending RBAC exists."""
+
+    __tablename__ = "teams"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class TeamMembership(Base):
+    __tablename__ = "team_memberships"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    team_id: Mapped[str] = mapped_column(ForeignKey("teams.id"))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    role: Mapped[str] = mapped_column(String, default="member")  # "admin" | "member"
+    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class TeamInvite(Base):
+    """§4.3 — a one-time, token-based invite (no email delivery in this
+    environment — same "no scheduler/no SMTP" gap as reminders/weekly
+    summaries elsewhere; the link is generated and would be sent by a
+    real deployment's email provider)."""
+
+    __tablename__ = "team_invites"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    team_id: Mapped[str] = mapped_column(ForeignKey("teams.id"))
+    token: Mapped[str] = mapped_column(String, unique=True)
+    role: Mapped[str] = mapped_column(String, default="member")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    accepted_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+
+
+class TeamScenario(Base):
+    """§4.3 custom scenarios — a team-authored practice prompt, alongside
+    the built-in `CONTEXTS` the frontend ships with."""
+
+    __tablename__ = "team_scenarios"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    team_id: Mapped[str] = mapped_column(ForeignKey("teams.id"))
+    title: Mapped[str] = mapped_column(String)
+    prompt: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class TeamRubric(Base):
+    """§4.3 custom rubrics — a team-authored set of LLM rubric criteria,
+    alongside `ScenarioRubric`'s built-in default criteria
+    (`api.pipeline.llm`)."""
+
+    __tablename__ = "team_rubrics"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    team_id: Mapped[str] = mapped_column(ForeignKey("teams.id"))
+    name: Mapped[str] = mapped_column(String)
+    criteria: Mapped[list[str]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 _engine = create_engine(
     settings.database_url,
     connect_args={"check_same_thread": False} if settings.database_url.startswith("sqlite") else {},

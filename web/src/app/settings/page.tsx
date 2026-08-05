@@ -101,6 +101,14 @@ export default function Settings() {
 
       <CalendarSettings userId={userId} />
 
+      <div className="card stack">
+        <div className="pill">Team workspaces (§4.3)</div>
+        <p>Create or manage a team, custom scenarios, and custom rubrics.</p>
+        <Link href="/team" className="btn btn-primary" style={{ width: "fit-content" }}>
+          Go to team workspaces
+        </Link>
+      </div>
+
       <ShareLinkSettings userId={userId} />
 
       <div className="card stack">
