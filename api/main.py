@@ -12,6 +12,7 @@ from api.db import init_db
 from api.routers.admin import router as admin_router
 from api.routers.billing import router as billing_router
 from api.routers.feedback import router as feedback_router
+from api.routers.push import router as push_router
 from api.routers.sessions import router as sessions_router
 from api.routers.users import router as users_router
 
@@ -39,6 +40,7 @@ app.include_router(users_router)
 app.include_router(feedback_router)
 app.include_router(admin_router)
 app.include_router(billing_router)
+app.include_router(push_router)
 
 
 @app.get("/health")

@@ -182,3 +182,29 @@ class SubscriptionOut(BaseModel):
     current_period_end: datetime | None
     analyses_this_month: int
     analyses_limit: int | None  # None = unlimited
+
+
+class VapidPublicKeyOut(BaseModel):
+    public_key: str
+
+
+class PushSubscriptionKeys(BaseModel):
+    p256dh: str
+    auth: str
+
+
+class PushSubscribeRequest(BaseModel):
+    """The shape `PushSubscription.toJSON()` produces in the browser."""
+
+    endpoint: str
+    keys: PushSubscriptionKeys
+
+
+class PushUnsubscribeRequest(BaseModel):
+    endpoint: str
+
+
+class PushTestResult(BaseModel):
+    sent: int
+    failed: int
+    removed_stale: int

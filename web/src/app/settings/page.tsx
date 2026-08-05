@@ -7,6 +7,7 @@ import { deleteAccount, exportUserData } from "@/lib/api";
 import { clearStoredUserId, getStoredUserId } from "@/lib/localUser";
 import { ReminderSettings } from "@/components/ReminderSettings";
 import { BillingSettings } from "@/components/BillingSettings";
+import { PushSettings } from "@/components/PushSettings";
 
 export default function Settings() {
   const router = useRouter();
@@ -93,6 +94,8 @@ export default function Settings() {
       <BillingSettings userId={userId} />
 
       <ReminderSettings userId={userId} />
+
+      <PushSettings userId={userId} />
 
       <div className="card stack">
         <div className="pill">Export your data</div>

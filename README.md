@@ -79,9 +79,11 @@ upload (chunked, resumable) → normalize → STT → deterministic metrics
 | `api.routers.feedback` | §4.1 M6 | Thumbs up/down on a feedback item |
 | `api.routers.admin` | §6.5 | Raw-media retention purge (no scheduler in this environment — see below) |
 | `api.routers.billing` | §4.1 M12, §8.1 | Mock checkout, checkout confirmation, subscription status |
+| `api.routers.push` | §4.2 | VAPID public key, push subscribe/unsubscribe, real test-send |
 | `api.lifecycle` | §4.1 M11, §6.5 | Shared delete/export/retention logic — one code path for both session-delete and account-delete, so neither can drift and delete less than the other |
 | `api.streaks` | §4.1 M10 | `compute_streak()` — pure function, no DB access, same "pure core" pattern as `metrics/` |
 | `api.billing` | §4.1 M12, §8.1 | Entitlement logic (`effective_tier()`, `quota_exceeded()`) plus the no-real-Stripe provider seam — same pattern as `api.pipeline.stt` / `api.pipeline.llm` |
+| `api.push` | §4.2 | Real Web Push send (VAPID keys + `pywebpush`) — genuinely delivers, unlike the STT/LLM/Stripe seams; the gap is scheduling *when* to send, not the send itself |
 
 ### Data model (§6.4)
 
@@ -96,6 +98,7 @@ upload (chunked, resumable) → normalize → STT → deterministic metrics
 | `FeedbackItemRow` | `feedback_item` | Includes `user_rating` (nullable bool) for the M6 thumbs up/down |
 | `TranscriptCorrection` | — | Not a §6.4 entity — logs each M8 word-level correction (original/corrected text) with a snapshot of the speaker's L1 background, an ASR-quality-by-cohort signal per §6.6. Deleted along with its session (privacy over long-term analytics — see below) |
 | `Reminder` | `reminder` | Days + time-of-day preference for the M10 habit layer. Storing the preference is the whole scope — see below |
+| `PushSubscription` | — | Not a §6.4 entity — a browser's `PushSubscription.toJSON()` (endpoint + keys), for §4.2 Web Push. Unique on `endpoint`, since that *is* the subscription's identity |
 | `Subscription` | `subscription` | Tier/status/period-end for M12 billing — see below. A user with no row (or an expired `event_sprint`) is free-tier by construction, computed in `api.billing.effective_tier()`, never trusted from `.tier` alone |
 | `CheckoutSession` | — | Not a §6.4 entity — a pending mock checkout, resolved by the confirm endpoint standing in for a Stripe webhook |
 | `AnalysisResult` | — | Not a §6.4 entity — a per-attempt stamp of `rubric_version`/`model_version`, the computed metrics summary (kept as JSON: it's a derived aggregate, not a core entity), and a snapshot of the recommended drill |
@@ -155,6 +158,74 @@ non-expiring; `event_sprint` is unlimited for a rolling 30 days from
 confirmation, then reverts to free automatically — there's no
 "downgrade" event to handle, just `effective_tier()` recomputing on
 every read.
+
+## Phase 2
+
+### Web Push (§4.2 — "Installable PWA with Web Push")
+
+Unlike the STT/LLM/Stripe seams, **this one is real end to end on the
+send side** — no vendor account or API key needed, since the browser's
+own push service (e.g. Chrome's, via FCM) is used transparently once a
+client subscribes with our self-generated VAPID key. `api/push.py`
+generates a VAPID keypair (env vars persist it across restarts; unset,
+a fresh ephemeral one is generated per process — fine for dev, but every
+subscription made against it dies on the next restart) and sends via
+`pywebpush`.
+
+| Endpoint | Behavior |
+|---|---|
+| `GET /push/vapid-public-key` | The public key the frontend passes to `pushManager.subscribe()` |
+| `POST /users/{id}/push-subscriptions` | Register (or update, keyed by `endpoint`) a browser subscription |
+| `POST /users/{id}/push-subscriptions/unsubscribe` | Remove one |
+| `POST /users/{id}/push-subscriptions/test` | Send one real push to every subscription this user has; auto-removes any the push service reports as gone (404/410) |
+
+**The gap**: nothing decides *when* to send — there's no scheduler here
+to notice "it's time for this user's reminder window" (§4.1 M10's
+documented gap, same root cause as `purge-expired-media`). `test` is
+the only trigger that exists; wiring `Reminder` to actually fire one is
+a follow-up.
+
+**A real bug this caught**: a subscription with a slightly malformed
+`p256dh` key (valid-looking but wrong base64 padding — the kind of
+thing corrupted browser-side storage could produce) crashed
+`send_web_push` with an unhandled `binascii.Error` from deep inside
+`pywebpush`, before any network call was even attempted, returning a
+raw 500 instead of a handled failure. Fixed by broadening the catch and
+covered by a regression test (`test_send_web_push_malformed_key_does_not_raise`)
+— found via manual testing with a deliberately-malformed subscription,
+not by the unit tests, which is exactly why the manual pass matters.
+
+**Frontend**: `src/public/manifest.webmanifest` + `sw.js` (push,
+notificationclick, and a passthrough fetch handler some browsers still
+check for install-eligibility) + `src/lib/push.ts` + `PushSettings.tsx`
+on `/settings`. `layout.tsx` wires the manifest, theme color, and Apple
+home-screen-install meta (§4.2's explicit iOS note).
+
+**Verified live, and what couldn't be**: service worker registration
+and the Notification permission grant both work in this environment,
+confirmed via direct `page.evaluate` diagnostics with per-step
+timeouts. `pushManager.subscribe()` itself hangs indefinitely — it
+needs to reach the browser vendor's internal push-registration
+service, which this sandboxed container's browser can't do (backend-only
+HTTP through the environment's proxy doesn't cover Chromium's own
+network stack). That's an environment constraint on *testing* this
+specific browser call, not a defect in the implementation: the code
+path is identical to what any real deployed browser would run, and the
+send side was verified for real — registering a subscription with a
+genuine FCM-shaped endpoint and calling `/test` against it produces a
+real HTTP round-trip to `fcm.googleapis.com`, observable in the API
+logs and failing predictably (not silently) on fabricated key data.
+Given the hang was real (not just slow), `subscribeToPush()` now races
+against a 15s timeout with a clear error — a legitimate defensive fix
+independent of this sandbox, since `pushManager.subscribe()` has no
+built-in timeout and a stuck call previously left the UI's "Enabling…"
+button spinning forever with no way out.
+
+**Install note**: `pywebpush`'s `http-ece` dependency can fail to build
+on an old/distro-patched `pip`+`setuptools` combo (a `distutils`
+`install_layout` `AttributeError`) — if `pip install -e ".[dev]"` fails
+on it, upgrade `pip`/`setuptools`/`wheel` first (ideally in a venv) and
+retry.
 
 ### Privacy controls (§4.1 M11, §6.5)
 
@@ -311,6 +382,12 @@ backend above.
   analyses used," upgrading to Pro removes the counter entirely).
 - A four-link nav bar (Home/Practice/Progress/Settings) ties the pages
   together (`src/components/NavBar.tsx`).
+- **Installable PWA + Web Push** (§4.2): `manifest.webmanifest` + `sw.js`
+  make the app installable (including the iOS home-screen path §4.2
+  explicitly calls out); `PushSettings.tsx` on `/settings` wires real
+  subscribe/unsubscribe/test-send. See the Phase 2 section above for
+  what was verified live vs. what this sandbox's browser genuinely
+  can't reach.
 
 ### Running
 
@@ -335,12 +412,17 @@ onboarding is there to attach an L1 profile, not gate access.
 
 Auth (the `User` table is anonymous/device-scoped, not a login system),
 a real Stripe/STT/LLM vendor integration (all three follow the same
-provider-seam-plus-mock pattern), calendar integration, and everything
-in Phase 2/3 of the roadmap. That completes every §4.1 MVP checklist
-item (M1-M12) at the mock/seam level this environment allows — going
-further means real vendor credentials (Stripe, AssemblyAI/Deepgram, a
-frontier LLM) and infra (a task queue, a scheduler, a notification
-channel) this environment doesn't have.
+provider-seam-plus-mock pattern), and calendar integration. Every §4.1
+MVP checklist item (M1-M12) is complete at the mock/seam level this
+environment allows; going further on those means real vendor
+credentials (Stripe, AssemblyAI/Deepgram, a frontier LLM) this
+environment doesn't have. Web Push (§4.2) is the one Phase 2 item
+started so far, and unlike the others above, its send path is
+genuinely real — see the Phase 2 section for what was verified live
+and what a sandboxed test browser couldn't reach. Everything else in
+Phase 2/3 (voice roleplay, exemplar mode, coach share links,
+slide/PDF-linked transcripts, additional L1 profiles, calendar
+integration, team workspaces) is still ahead.
 
 ## Testing
 
@@ -352,4 +434,4 @@ pytest --cov=metrics --cov=api --cov-report=term-missing
 cd web && npx tsc --noEmit && npm run lint && npm run build
 ```
 
-153 backend tests, 99% line coverage as of this commit.
+171 backend tests, 99% line coverage as of this commit.

@@ -105,6 +105,25 @@ class Reminder(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class PushSubscription(Base):
+    """§4.2: Web Push registration — a browser `PushSubscription.toJSON()`.
+
+    `endpoint` is unique because it *is* the subscription's identity —
+    the same browser/device re-subscribing (e.g. after clearing storage)
+    gets a new endpoint, and the old one is naturally orphaned rather
+    than colliding with anything.
+    """
+
+    __tablename__ = "push_subscriptions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    endpoint: Mapped[str] = mapped_column(String, unique=True)
+    p256dh: Mapped[str] = mapped_column(String)
+    auth: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class Subscription(Base):
     """§4.1 M12, §8.1 commercial model.
 
