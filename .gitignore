@@ -4,3 +4,5 @@ __pycache__/
 .coverage
 *.egg-info/
 .venv/
+cadence_dev.db
+media_store/
