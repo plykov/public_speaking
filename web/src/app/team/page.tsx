@@ -10,11 +10,16 @@ import {
   deleteTeamScenario,
   getTeam,
   getTeamAnalytics,
+  getTeamAuditLog,
+  getTeamRetention,
   listTeamRubrics,
   listTeamScenarios,
   listTeamsForUser,
   removeTeamMember,
   updateMemberRole,
+  updateTeamRetention,
+  type AuditLogEntryOut,
+  type RetentionSettingOut,
   type TeamAnalyticsOut,
   type TeamOut,
   type TeamRubricOut,
@@ -35,6 +40,9 @@ export default function TeamPage() {
   const [scenarios, setScenarios] = useState<TeamScenarioOut[]>([]);
   const [rubrics, setRubrics] = useState<TeamRubricOut[]>([]);
   const [analytics, setAnalytics] = useState<TeamAnalyticsOut | null>(null);
+  const [retention, setRetention] = useState<RetentionSettingOut | null>(null);
+  const [auditLog, setAuditLog] = useState<AuditLogEntryOut[]>([]);
+  const [retentionInput, setRetentionInput] = useState("");
   const [newTeamName, setNewTeamName] = useState("");
   const [scenarioTitle, setScenarioTitle] = useState("");
   const [scenarioPrompt, setScenarioPrompt] = useState("");
@@ -58,16 +66,40 @@ export default function TeamPage() {
   }, [userId]);
 
   async function refreshTeam(teamId: string) {
-    const [team, teamScenarios, teamRubrics, teamAnalytics] = await Promise.all([
-      getTeam(teamId),
-      listTeamScenarios(teamId),
-      listTeamRubrics(teamId),
-      getTeamAnalytics(teamId),
-    ]);
+    const [team, teamScenarios, teamRubrics, teamAnalytics, teamRetention, teamAuditLog] =
+      await Promise.all([
+        getTeam(teamId),
+        listTeamScenarios(teamId),
+        listTeamRubrics(teamId),
+        getTeamAnalytics(teamId),
+        getTeamRetention(teamId),
+        getTeamAuditLog(teamId),
+      ]);
     setSelected(team);
     setScenarios(teamScenarios);
     setRubrics(teamRubrics);
     setAnalytics(teamAnalytics);
+    setRetention(teamRetention);
+    setRetentionInput(teamRetention.retention_days?.toString() ?? "");
+    setAuditLog(teamAuditLog);
+  }
+
+  async function handleUpdateRetention() {
+    if (!selected) return;
+    const trimmed = retentionInput.trim();
+    const days = trimmed === "" ? null : Number(trimmed);
+    if (days !== null && (!Number.isInteger(days) || days <= 0)) {
+      setError("Retention days must be a positive whole number, or blank to use the default.");
+      return;
+    }
+    setError(null);
+    try {
+      const updated = await updateTeamRetention(selected.id, days, userId ?? undefined);
+      setRetention(updated);
+      setAuditLog(await getTeamAuditLog(selected.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "couldn't update retention");
+    }
   }
 
   async function handleCreateTeam() {
@@ -244,6 +276,54 @@ export default function TeamPage() {
               </div>
             </div>
           )}
+
+          <div className="card stack">
+            <div className="pill">Retention (§4.3)</div>
+            <p style={{ color: "var(--muted)", fontSize: "0.85rem" }}>
+              Overrides the default 30-day raw-media retention window for this team. If a member
+              belongs to more than one team, the most restrictive setting applies.
+            </p>
+            <input
+              className="btn"
+              style={{ textAlign: "left", cursor: "text" }}
+              placeholder="Days (blank = use default)"
+              value={retentionInput}
+              onChange={(e) => setRetentionInput(e.target.value)}
+            />
+            <button className="btn btn-primary" onClick={handleUpdateRetention}>
+              Save retention setting
+            </button>
+            {retention && (
+              <p style={{ color: "var(--muted)", fontSize: "0.85rem" }}>
+                Currently effective: {retention.effective_retention_days} days
+                {retention.retention_days === null && " (default)"}
+              </p>
+            )}
+          </div>
+
+          <div className="card stack">
+            <div className="pill">Audit log (§4.3)</div>
+            <p style={{ color: "var(--muted)", fontSize: "0.85rem" }}>
+              Immutable record of sensitive team actions. Not shown: who&apos;s allowed to view
+              this — there&apos;s no auth system to gate it.
+            </p>
+            {auditLog.length === 0 && (
+              <p style={{ color: "var(--muted)" }}>No audit entries yet.</p>
+            )}
+            {auditLog.map((entry) => (
+              <div key={entry.id} className="row" style={{ alignItems: "center", gap: 8 }}>
+                <span className="pill">{entry.action}</span>
+                <span style={{ fontSize: "0.8rem", color: "var(--muted)" }}>
+                  {new Date(entry.created_at).toLocaleString()}
+                </span>
+                {entry.target_id && (
+                  <span style={{ fontFamily: "monospace", fontSize: "0.75rem" }}>
+                    {entry.target_type}:{entry.target_id}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
 
           <div className="card stack">
             <div className="pill">Custom scenarios</div>

@@ -497,3 +497,36 @@ class TeamAnalyticsOut(BaseModel):
     avg_hedging_rate: float | None
     avg_point_position_score: float | None
     per_member: list[MemberAnalyticsOut]
+
+
+class UpdateRetentionRequest(BaseModel):
+    """§4.3 configurable retention. `None` clears the override, reverting
+    to the global default (api.lifecycle.DEFAULT_RETENTION_DAYS)."""
+
+    retention_days: int | None = None
+
+    @field_validator("retention_days")
+    @classmethod
+    def _positive_or_none(cls, value: int | None) -> int | None:
+        if value is not None and value <= 0:
+            raise ValueError("retention_days must be positive")
+        return value
+
+
+class RetentionSettingOut(BaseModel):
+    team_id: str
+    retention_days: int | None  # None = using the global default
+    effective_retention_days: int
+
+
+class AuditLogEntryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    team_id: str | None
+    actor_user_id: str | None
+    action: str
+    target_type: str | None
+    target_id: str | None
+    detail: dict | None
+    created_at: datetime

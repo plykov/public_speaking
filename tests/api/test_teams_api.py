@@ -320,3 +320,108 @@ def test_team_analytics_never_includes_raw_content_fields(client) -> None:
 def test_team_analytics_unknown_team_404(client) -> None:
     resp = client.get("/teams/does-not-exist/analytics")
     assert resp.status_code == 404
+
+
+def test_retention_defaults_to_global(client) -> None:
+    team_id, _ = _team(client)
+    resp = client.get(f"/teams/{team_id}/retention")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["retention_days"] is None
+    assert body["effective_retention_days"] == 30
+
+
+def test_update_retention(client) -> None:
+    team_id, admin_id = _team(client)
+    resp = client.put(
+        f"/teams/{team_id}/retention?acting_user_id={admin_id}", json={"retention_days": 7}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["retention_days"] == 7
+    assert body["effective_retention_days"] == 7
+
+    resp = client.get(f"/teams/{team_id}/retention")
+    assert resp.json()["retention_days"] == 7
+
+
+def test_update_retention_rejects_non_positive(client) -> None:
+    team_id, _ = _team(client)
+    resp = client.put(f"/teams/{team_id}/retention", json={"retention_days": 0})
+    assert resp.status_code == 422
+
+
+def test_update_retention_clears_with_null(client) -> None:
+    team_id, _ = _team(client)
+    client.put(f"/teams/{team_id}/retention", json={"retention_days": 7})
+    resp = client.put(f"/teams/{team_id}/retention", json={"retention_days": None})
+    assert resp.json()["retention_days"] is None
+    assert resp.json()["effective_retention_days"] == 30
+
+
+def test_retention_unknown_team_404(client) -> None:
+    resp = client.get("/teams/does-not-exist/retention")
+    assert resp.status_code == 404
+    resp = client.put("/teams/does-not-exist/retention", json={"retention_days": 7})
+    assert resp.status_code == 404
+
+
+def test_audit_log_records_team_creation(client) -> None:
+    team_id, admin_id = _team(client)
+    resp = client.get(f"/teams/{team_id}/audit-log")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert any(e["action"] == "team.create" for e in body)
+    assert all(e["team_id"] == team_id for e in body)
+
+
+def test_audit_log_records_member_role_change(client) -> None:
+    team_id, admin_id = _team(client)
+    member_id = _user(client)
+    invite = client.post(f"/teams/{team_id}/invites", json={"role": "member"}).json()
+    client.post(f"/team-invites/{invite['token']}/accept", json={"user_id": member_id})
+
+    client.put(
+        f"/teams/{team_id}/members/{member_id}/role?acting_user_id={admin_id}",
+        json={"role": "admin"},
+    )
+
+    body = client.get(f"/teams/{team_id}/audit-log").json()
+    role_change = next(e for e in body if e["action"] == "team.member.role_change")
+    assert role_change["actor_user_id"] == admin_id
+    assert role_change["target_id"] == member_id
+    assert role_change["detail"] == {"from": "member", "to": "admin"}
+
+
+def test_audit_log_records_member_removal(client) -> None:
+    team_id, admin_id = _team(client)
+    member_id = _user(client)
+    invite = client.post(f"/teams/{team_id}/invites", json={"role": "member"}).json()
+    client.post(f"/team-invites/{invite['token']}/accept", json={"user_id": member_id})
+
+    client.delete(f"/teams/{team_id}/members/{member_id}?acting_user_id={admin_id}")
+
+    body = client.get(f"/teams/{team_id}/audit-log").json()
+    assert any(e["action"] == "team.member.remove" and e["target_id"] == member_id for e in body)
+
+
+def test_audit_log_records_retention_change(client) -> None:
+    team_id, admin_id = _team(client)
+    client.put(f"/teams/{team_id}/retention", json={"retention_days": 14})
+    body = client.get(f"/teams/{team_id}/audit-log").json()
+    assert any(e["action"] == "team.retention.update" and e["detail"]["to"] == 14 for e in body)
+
+
+def test_audit_log_unknown_team_404(client) -> None:
+    resp = client.get("/teams/does-not-exist/audit-log")
+    assert resp.status_code == 404
+
+
+def test_audit_log_scoped_to_team(client) -> None:
+    team_a, _ = _team(client)
+    team_b, _ = _team(client)
+    body = client.get(f"/teams/{team_a}/audit-log").json()
+    assert all(e["team_id"] == team_a for e in body)
+    assert len(body) >= 1
+    body_b = client.get(f"/teams/{team_b}/audit-log").json()
+    assert body_b is not body

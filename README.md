@@ -92,6 +92,7 @@ upload (chunked, resumable) → normalize → STT → deterministic metrics
 | `api.calendar` | §4.2 | Calendar-connection seam/mock (real Google/Microsoft OAuth needs an app registration not available here) + genuinely real imminent-event-to-drill matching |
 | `api.routers.teams` | §4.3 | Team workspaces, membership/roles (not enforced — no auth system exists), invites, custom scenarios (real) + custom rubrics (stored, not yet consumed by scoring) |
 | `api.analytics` | §4.3 | Manager aggregate analytics — team/per-member metric averages; no field capable of carrying raw recordings/transcripts, by construction |
+| `api.audit` | §4.3 | One-function audit-log helper — appends an immutable `AuditLogEntry`, no other logic |
 
 ### Data model (§6.4)
 
@@ -114,6 +115,7 @@ upload (chunked, resumable) → normalize → STT → deterministic metrics
 | `CalendarConnection` | `calendar_connections` | Not a §6.4 entity — whether/which calendar provider (§4.2) a user has connected. One row per user |
 | `Team` / `TeamMembership` / `TeamInvite` | `teams` / `team_memberships` / `team_invites` | Not §6.4 entities — team workspace (§4.3), membership + advisory role, one-time invite tokens |
 | `TeamScenario` / `TeamRubric` | `team_scenarios` / `team_rubrics` | Not §6.4 entities — team-authored custom scenario prompts (real) and rubric criteria (stored, not yet consumed by scoring) |
+| `AuditLogEntry` | `audit_log_entries` | Not a §6.4 entity — an immutable audit-log row (§4.3): actor, action, target, detail. Never updated/deleted by any other code path |
 | `Subscription` | `subscription` | Tier/status/period-end for M12 billing — see below. A user with no row (or an expired `event_sprint`) is free-tier by construction, computed in `api.billing.effective_tier()`, never trusted from `.tier` alone |
 | `CheckoutSession` | — | Not a §6.4 entity — a pending mock checkout, resolved by the confirm endpoint standing in for a Stripe webhook |
 | `AnalysisResult` | — | Not a §6.4 entity — a per-attempt stamp of `rubric_version`/`model_version`, the computed metrics summary (kept as JSON: it's a derived aggregate, not a core entity), and a snapshot of the recommended drill |
@@ -579,6 +581,43 @@ created a team in context 1, generated an invite link, opened it in
 context 2 (a different anonymous user), accepted it, and confirmed both
 members now appear in the roster from either context.
 
+### Audit logs + configurable retention (§4.3)
+
+Both real, no vendor gap.
+
+- **Audit logs**: `api/audit.py`'s `log_audit_event()` is deliberately
+  dumb — one function, appends one immutable `AuditLogEntry` row, no
+  redaction logic, no retention policy of its own (audit entries are
+  never purged by `api.lifecycle`, and nothing else in the app updates or
+  deletes them, including account/team deletion). Wired into every
+  sensitive team action: create, invite create/accept, member
+  role-change/removal, scenario/rubric create/delete, retention changes.
+  Where an action's endpoint has no session to identify its caller (no
+  auth system — see the team-workspaces section above), it accepts an
+  optional `acting_user_id` that's recorded as **self-reported**, not
+  verified — stated in the endpoint's docstring rather than implied to be
+  trustworthy.
+- **Configurable retention**: `Team.retention_days` overrides the global
+  30-day default (`api.lifecycle.DEFAULT_RETENTION_DAYS`) for a team.
+  `effective_retention_days()` resolves a user's *actual* retention window
+  by taking the **most restrictive** setting across every team they
+  belong to (retention is a privacy floor, not something a lenient team
+  membership can override) — teams with no override don't count as
+  "unlimited" and can't win that comparison. `purge_expired_media` now
+  computes this per-asset via the asset's owning session's user, instead
+  of a single global cutoff.
+
+| Endpoint | Behavior |
+|---|---|
+| `GET` / `PUT /teams/{id}/retention` | Read/set the override; `null` clears it back to the default |
+| `GET /teams/{id}/audit-log` | Full history for a team, newest first |
+
+**Frontend**: `/team` gained "Retention" and "Audit log" cards. Verified
+live: set a team's retention to 7 days, confirmed "Currently effective: 7
+days" reflected it immediately, and saw both the `team.create` and
+`team.retention.update` entries appear in the audit log with correct
+actor/target/detail data.
+
 ### Manager aggregate analytics (§4.3 — "recording access off by default")
 
 `api/analytics.py` computes team-level and per-member aggregates (average
@@ -737,4 +776,4 @@ pytest --cov=metrics --cov=api --cov-report=term-missing
 cd web && npx tsc --noEmit && npm run lint && npm run build
 ```
 
-321 backend tests, 99% line coverage as of this commit.
+340 backend tests, 99% line coverage as of this commit.
