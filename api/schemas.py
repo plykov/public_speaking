@@ -86,6 +86,23 @@ class AnalysisResultOut(BaseModel):
     created_at: datetime
 
 
+class TranscriptWordOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    seq_index: int
+    text: str
+    start_ms: int
+    end_ms: int
+    confidence: float
+
+
+class UpdateTranscriptRequest(BaseModel):
+    """§4.1 M8: corrected word text, same length/order as the original
+    transcript — timestamps are never user-editable, only what was said."""
+
+    words: list[str]
+
+
 class AttemptSummaryOut(BaseModel):
     """One row of §4.1 M9 progress data — self-relative only, no ranking
     against other users' attempts."""

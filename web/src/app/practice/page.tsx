@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { RecorderPanel } from "@/components/RecorderPanel";
 import { DevTranscriptPicker } from "@/components/DevTranscriptPicker";
 import { Scorecard } from "@/components/Scorecard";
+import { EditableTranscript } from "@/components/EditableTranscript";
 import { createSession, analyzeSession, rateFeedbackItem, type AnalysisResultOut } from "@/lib/api";
 import { uploadBlobChunked } from "@/lib/chunkedUpload";
 import { SAMPLE_TRANSCRIPTS } from "@/lib/sampleTranscripts";
@@ -144,6 +145,7 @@ function PracticeStudioInner() {
             result={baselineResult}
             onRate={(id, useful) => handleRate("baseline", id, useful)}
           />
+          <EditableTranscript sessionId={baselineResult.session_id} onReanalyzed={setBaselineResult} />
           <button className="btn btn-primary" onClick={() => setStep("drill-record")}>
             Try the drill: {baselineResult.drill.title}
           </button>
@@ -168,6 +170,7 @@ function PracticeStudioInner() {
             previous={baselineResult}
             onRate={(id, useful) => handleRate("retry", id, useful)}
           />
+          <EditableTranscript sessionId={retryResult.session_id} onReanalyzed={setRetryResult} />
           <button
             className="btn"
             onClick={() => {

@@ -20,6 +20,7 @@ from api.db import (
     MediaAsset,
     MetricEventRow,
     PracticeSession,
+    TranscriptCorrection,
     TranscriptWord,
     User,
 )
@@ -33,8 +34,15 @@ def _media_key(session_id: str) -> str:
 
 
 def delete_session_data(db: OrmSession, store: ObjectStore, session_id: str) -> None:
-    """Delete one session's media and every derived row. Does not commit."""
+    """Delete one session's media and every derived row. Does not commit.
+
+    Includes `TranscriptCorrection` rows even though §6.6 wants those
+    retained as an aggregate ASR-quality-by-cohort signal — privacy wins
+    the tradeoff here, matching "account delete: every session's data."
+    Losing correction history on delete is the accepted cost.
+    """
     store.delete(_media_key(session_id))
+    db.query(TranscriptCorrection).filter_by(session_id=session_id).delete()
     db.query(TranscriptWord).filter_by(session_id=session_id).delete()
     db.query(MetricEventRow).filter_by(session_id=session_id).delete()
     db.query(FeedbackItemRow).filter_by(session_id=session_id).delete()

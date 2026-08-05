@@ -9,9 +9,10 @@ Normalizes the entities that matter for onboarding, coaching, and
 progress: `user`, `l1_profile`, `session`, `media_asset`,
 `transcript_segment` (as `TranscriptWord`, word-level), `metric_event`,
 `feedback_item` (with `user_rating` for the thumbs up/down in §4.1 M6),
-and `attempt_link` (as `PracticeSession.parent_session_id`, a
+`attempt_link` (as `PracticeSession.parent_session_id`, a
 self-referencing FK — simpler than a join table for a 1:1 original↔retry
-relationship, semantically the same as §6.4's `attempt_link`).
+relationship, semantically the same as §6.4's `attempt_link`), and
+`TranscriptCorrection` for the M8 editable-transcript quality signal.
 
 Deliberately **not** modeled yet: `goal`, `scenario` (kept as a plain
 string — no admin CRUD for scenarios was asked for), `rubric_version`
@@ -121,6 +122,27 @@ class TranscriptWord(Base):
     start_ms: Mapped[int] = mapped_column(Integer)
     end_ms: Mapped[int] = mapped_column(Integer)
     confidence: Mapped[float] = mapped_column(Float)
+
+
+class TranscriptCorrection(Base):
+    """§4.1 M8: a user-submitted ASR correction, logged as a quality signal.
+
+    `l1_first_language` is a snapshot taken at correction time (not a
+    live FK to `L1Profile`) so a later profile edit or account deletion
+    doesn't rewrite or orphan the historical signal this table exists to
+    preserve — the whole point is measuring ASR quality by L1 cohort
+    over time (§6.6).
+    """
+
+    __tablename__ = "transcript_corrections"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"))
+    seq_index: Mapped[int] = mapped_column(Integer)
+    original_text: Mapped[str] = mapped_column(String)
+    corrected_text: Mapped[str] = mapped_column(String)
+    l1_first_language: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
 class MetricEventRow(Base):

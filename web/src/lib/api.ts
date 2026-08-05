@@ -58,6 +58,14 @@ export interface AnalysisResultOut {
   created_at: string;
 }
 
+export interface TranscriptWordOut {
+  seq_index: number;
+  text: string;
+  start_ms: number;
+  end_ms: number;
+  confidence: number;
+}
+
 export interface AttemptSummaryOut {
   session_id: string;
   parent_session_id: string | null;
@@ -162,6 +170,25 @@ export async function rateFeedbackItem(
     body: JSON.stringify({ useful }),
   });
   return asJson<FeedbackItemOut>(res);
+}
+
+/** §4.1 M8: the editable word list for a session. */
+export async function getTranscript(sessionId: string): Promise<TranscriptWordOut[]> {
+  const res = await fetch(`${API_BASE}/sessions/${sessionId}/transcript`);
+  return asJson<TranscriptWordOut[]>(res);
+}
+
+/** Submit corrected words (same length/order as the original) and re-score. */
+export async function updateTranscript(
+  sessionId: string,
+  words: string[],
+): Promise<AnalysisResultOut> {
+  const res = await fetch(`${API_BASE}/sessions/${sessionId}/transcript`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ words }),
+  });
+  return asJson<AnalysisResultOut>(res);
 }
 
 export async function getAttempts(userId: string): Promise<AttemptSummaryOut[]> {
