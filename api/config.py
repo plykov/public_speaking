@@ -14,6 +14,11 @@ class Settings:
     llm_provider: str = os.environ.get("LLM_PROVIDER", "mock")
     rubric_version: str = os.environ.get("RUBRIC_VERSION", "rubric-v1")
     model_version: str = os.environ.get("MODEL_VERSION", "mock-llm-v1")
+    cors_allow_origins: tuple[str, ...] = tuple(
+        o.strip()
+        for o in os.environ.get("CORS_ALLOW_ORIGINS", "http://localhost:3000").split(",")
+        if o.strip()
+    )
 
 
 settings = Settings()
