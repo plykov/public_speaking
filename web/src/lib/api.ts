@@ -4,6 +4,8 @@
  * dev server or a deployed API.
  */
 
+import type { SampleWord } from "@/lib/sampleTranscripts";
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export interface UserOut {
@@ -16,6 +18,14 @@ export interface L1ProfileOut {
   user_id: string;
   first_language: string;
   self_declared_confidence: string;
+  first_language_code: string | null;
+  calibration_note: string | null;
+}
+
+export interface L1CalibrationProfileOut {
+  code: string;
+  label: string;
+  calibration_note: string;
 }
 
 export interface SessionOut {
@@ -95,6 +105,17 @@ export interface SubscriptionOut {
   analyses_limit: number | null;
 }
 
+export interface SlideDeckOut {
+  filename: string;
+  page_count: number;
+  thumbnail_urls: string[];
+}
+
+export interface SlideTransitionOut {
+  slide_index: number;
+  timestamp_ms: number;
+}
+
 export interface AttemptSummaryOut {
   session_id: string;
   parent_session_id: string | null;
@@ -129,6 +150,7 @@ export async function upsertL1Profile(
   userId: string,
   firstLanguage: string,
   selfDeclaredConfidence: string,
+  firstLanguageCode: string | null = null,
 ): Promise<L1ProfileOut> {
   const res = await fetch(`${API_BASE}/users/${userId}/l1-profile`, {
     method: "PUT",
@@ -136,9 +158,15 @@ export async function upsertL1Profile(
     body: JSON.stringify({
       first_language: firstLanguage,
       self_declared_confidence: selfDeclaredConfidence,
+      first_language_code: firstLanguageCode,
     }),
   });
   return asJson<L1ProfileOut>(res);
+}
+
+export async function fetchL1CalibrationProfiles(): Promise<L1CalibrationProfileOut[]> {
+  const res = await fetch(`${API_BASE}/l1-calibration-profiles`);
+  return asJson<L1CalibrationProfileOut[]>(res);
 }
 
 export async function createSession(
@@ -170,6 +198,44 @@ export async function uploadChunk(
   return asJson<{ bytes_received: number }>(res);
 }
 
+export async function uploadSlideDeck(
+  sessionId: string,
+  file: File,
+): Promise<SlideDeckOut> {
+  const res = await fetch(
+    `${API_BASE}/sessions/${sessionId}/slides?filename=${encodeURIComponent(file.name)}`,
+    { method: "POST", body: file, headers: { "Content-Type": "application/pdf" } },
+  );
+  return asJson<SlideDeckOut>(res);
+}
+
+export async function fetchSlideDeck(sessionId: string): Promise<SlideDeckOut | null> {
+  const res = await fetch(`${API_BASE}/sessions/${sessionId}/slides`);
+  if (res.status === 404) return null;
+  return asJson<SlideDeckOut>(res);
+}
+
+export function slideThumbnailUrl(path: string): string {
+  return `${API_BASE}${path}`;
+}
+
+export async function upsertSlideTransitions(
+  sessionId: string,
+  transitions: SlideTransitionOut[],
+): Promise<SlideTransitionOut[]> {
+  const res = await fetch(`${API_BASE}/sessions/${sessionId}/slide-transitions`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ transitions }),
+  });
+  return asJson<SlideTransitionOut[]>(res);
+}
+
+export async function fetchSlideTransitions(sessionId: string): Promise<SlideTransitionOut[]> {
+  const res = await fetch(`${API_BASE}/sessions/${sessionId}/slide-transitions`);
+  return asJson<SlideTransitionOut[]>(res);
+}
+
 export async function getUploadStatus(sessionId: string): Promise<{ bytes_received: number }> {
   const res = await fetch(`${API_BASE}/sessions/${sessionId}/media/status`);
   return asJson<{ bytes_received: number }>(res);
@@ -183,6 +249,112 @@ export async function analyzeSession(sessionId: string): Promise<AnalysisResultO
 export async function getResult(sessionId: string): Promise<AnalysisResultOut> {
   const res = await fetch(`${API_BASE}/sessions/${sessionId}/result`);
   return asJson<AnalysisResultOut>(res);
+}
+
+export interface ExemplarOut {
+  original_text: string;
+  rewritten_text: string;
+  explanation: string[];
+  model_version: string;
+}
+
+/** §4.2 exemplar mode: a stronger version of the attempt + the delta. */
+export async function fetchExemplar(sessionId: string): Promise<ExemplarOut> {
+  const res = await fetch(`${API_BASE}/sessions/${sessionId}/exemplar`);
+  return asJson<ExemplarOut>(res);
+}
+
+export interface RoleplayPersonaOut {
+  id: string;
+  name: string;
+  role: string;
+  description: string;
+}
+
+export interface RoleplayTurnOut {
+  turn_index: number;
+  speaker: "user" | "persona";
+  persona_id: string | null;
+  text: string;
+}
+
+export interface RoleplaySessionOut {
+  id: string;
+  persona_ids: string[];
+  scenario: string;
+  status: string;
+  turns: RoleplayTurnOut[];
+}
+
+export interface SubmitRoleplayTurnResponse {
+  session_status: string;
+  new_turns: RoleplayTurnOut[];
+}
+
+/** §4.2 voice AI roleplay — single- and multi-persona, turn-based. */
+export async function fetchRoleplayPersonas(): Promise<RoleplayPersonaOut[]> {
+  const res = await fetch(`${API_BASE}/roleplay-personas`);
+  return asJson<RoleplayPersonaOut[]>(res);
+}
+
+export async function createRoleplaySession(
+  personaIds: string[],
+  userId?: string,
+): Promise<RoleplaySessionOut> {
+  const res = await fetch(`${API_BASE}/roleplay-sessions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ persona_ids: personaIds, user_id: userId ?? null }),
+  });
+  return asJson<RoleplaySessionOut>(res);
+}
+
+export interface CalendarConnectionOut {
+  connected: boolean;
+  provider: string | null;
+}
+
+export interface UpcomingPromptOut {
+  has_prompt: boolean;
+  event_title: string | null;
+  minutes_until: number | null;
+  drill: DrillOut | null;
+}
+
+/** §4.2 calendar integration driving pre-meeting prompts. */
+export async function getCalendarConnection(userId: string): Promise<CalendarConnectionOut> {
+  const res = await fetch(`${API_BASE}/users/${userId}/calendar`);
+  return asJson<CalendarConnectionOut>(res);
+}
+
+export async function connectCalendar(userId: string): Promise<CalendarConnectionOut> {
+  const res = await fetch(`${API_BASE}/users/${userId}/calendar/connect`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider: "mock" }),
+  });
+  return asJson<CalendarConnectionOut>(res);
+}
+
+export async function disconnectCalendar(userId: string): Promise<void> {
+  await fetch(`${API_BASE}/users/${userId}/calendar`, { method: "DELETE" });
+}
+
+export async function fetchUpcomingPrompt(userId: string): Promise<UpcomingPromptOut> {
+  const res = await fetch(`${API_BASE}/users/${userId}/calendar/upcoming-prompt`);
+  return asJson<UpcomingPromptOut>(res);
+}
+
+export async function submitRoleplayTurn(
+  sessionId: string,
+  words: SampleWord[],
+): Promise<SubmitRoleplayTurnResponse> {
+  const res = await fetch(`${API_BASE}/roleplay-sessions/${sessionId}/turns`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(words),
+  });
+  return asJson<SubmitRoleplayTurnResponse>(res);
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
@@ -234,6 +406,84 @@ export async function exportUserData(userId: string): Promise<Record<string, unk
 /** Account delete (§4.1 M11, §6.5) — every session's media/rows, the L1 profile, and the user row. */
 export async function deleteAccount(userId: string): Promise<void> {
   await fetch(`${API_BASE}/users/${userId}`, { method: "DELETE" });
+}
+
+export interface ShareLinkOut {
+  id: string;
+  token: string;
+  label: string | null;
+  can_view_progress: boolean;
+  can_view_transcripts: boolean;
+  can_view_feedback: boolean;
+  created_at: string;
+  expires_at: string | null;
+  revoked: boolean;
+}
+
+export interface SharedFeedbackItemOut {
+  criterion: string;
+  observation: string;
+  rationale: string;
+  repair: string;
+}
+
+export interface SharedAttemptOut {
+  session_id: string;
+  scenario: string;
+  created_at: string;
+  wpm_overall: number | null;
+  filler_rate_per_100_words: number | null;
+  hedging_rate_per_100_words: number | null;
+  point_position_score: number | null;
+  transcript_text: string | null;
+  feedback_items: SharedFeedbackItemOut[] | null;
+}
+
+export interface SharedViewOut {
+  label: string | null;
+  can_view_progress: boolean;
+  can_view_transcripts: boolean;
+  can_view_feedback: boolean;
+  attempts: SharedAttemptOut[];
+}
+
+/** §4.2 — private coach/manager share links, granular permissions. */
+export async function createShareLink(
+  userId: string,
+  options: {
+    label?: string;
+    canViewProgress?: boolean;
+    canViewTranscripts?: boolean;
+    canViewFeedback?: boolean;
+    expiresInDays?: number;
+  },
+): Promise<ShareLinkOut> {
+  const res = await fetch(`${API_BASE}/users/${userId}/share-links`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      label: options.label ?? null,
+      can_view_progress: options.canViewProgress ?? true,
+      can_view_transcripts: options.canViewTranscripts ?? false,
+      can_view_feedback: options.canViewFeedback ?? false,
+      expires_in_days: options.expiresInDays ?? null,
+    }),
+  });
+  return asJson<ShareLinkOut>(res);
+}
+
+export async function listShareLinks(userId: string): Promise<ShareLinkOut[]> {
+  const res = await fetch(`${API_BASE}/users/${userId}/share-links`);
+  return asJson<ShareLinkOut[]>(res);
+}
+
+export async function revokeShareLink(userId: string, shareId: string): Promise<void> {
+  await fetch(`${API_BASE}/users/${userId}/share-links/${shareId}`, { method: "DELETE" });
+}
+
+export async function fetchSharedView(token: string): Promise<SharedViewOut> {
+  const res = await fetch(`${API_BASE}/share/${token}`);
+  return asJson<SharedViewOut>(res);
 }
 
 /** §4.1 M10: store a reminder window. Storing the preference only — no

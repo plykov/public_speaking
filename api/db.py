@@ -83,6 +83,9 @@ class L1Profile(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), unique=True)
     first_language: Mapped[str] = mapped_column(String)
     self_declared_confidence: Mapped[str] = mapped_column(String)  # e.g. "building"|"comfortable"|"fluent"
+    # §4.2: a catalog code (see api/l1_calibration.py) when the user picked a
+    # known L1 background; None for free-text-only or "prefer not to say".
+    first_language_code: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     user: Mapped[User] = relationship(back_populates="l1_profile")
@@ -102,6 +105,25 @@ class Reminder(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), unique=True)
     days: Mapped[list] = mapped_column(JSON)  # e.g. ["mon","wed","fri"]
     time_of_day: Mapped[str] = mapped_column(String)  # "HH:MM", 24h, no timezone handling yet
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class PushSubscription(Base):
+    """§4.2: Web Push registration — a browser `PushSubscription.toJSON()`.
+
+    `endpoint` is unique because it *is* the subscription's identity —
+    the same browser/device re-subscribing (e.g. after clearing storage)
+    gets a new endpoint, and the old one is naturally orphaned rather
+    than colliding with anything.
+    """
+
+    __tablename__ = "push_subscriptions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    endpoint: Mapped[str] = mapped_column(String, unique=True)
+    p256dh: Mapped[str] = mapped_column(String)
+    auth: Mapped[str] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
@@ -250,6 +272,109 @@ class AnalysisResult(Base):
     drill_duration_minutes: Mapped[str] = mapped_column(String)
     drill_targets_criterion: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class SlideDeck(Base):
+    """§4.2 — one PDF slide deck per session. `storage_key` is the PDF
+    itself; per-page thumbnails are stored separately (rendered once at
+    upload time, keyed by page index) since a talk with 40 slides
+    shouldn't re-rasterize the whole deck on every transcript view."""
+
+    __tablename__ = "slide_decks"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"), unique=True)
+    filename: Mapped[str] = mapped_column(String)
+    page_count: Mapped[int] = mapped_column(Integer)
+    storage_key: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class SlideTransition(Base):
+    """§4.2 — one "the presenter advanced to slide N" mark, timestamped
+    against the recording's elapsed milliseconds (same clock as
+    `TranscriptWord.start_ms`), so a transcript word's slide is whichever
+    transition's timestamp is the latest one at or before it."""
+
+    __tablename__ = "slide_transitions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"))
+    slide_index: Mapped[int] = mapped_column(Integer)  # 0-based
+    timestamp_ms: Mapped[int] = mapped_column(Integer)
+
+
+class ShareLink(Base):
+    """§4.2 — a private, tokenized read-only view for a coach/manager.
+
+    No login for the viewer: the token itself is the credential (like a
+    Google Docs "anyone with the link" share, not an account). Three
+    independent permission flags, all opt-in and false by default —
+    raw audio is never exposed through this at any permission setting,
+    that's not a flag, it's a property of what the endpoint returns.
+    """
+
+    __tablename__ = "share_links"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    token: Mapped[str] = mapped_column(String, unique=True)
+    label: Mapped[str | None] = mapped_column(String, nullable=True)
+    can_view_progress: Mapped[bool] = mapped_column(Boolean, default=True)
+    can_view_transcripts: Mapped[bool] = mapped_column(Boolean, default=False)
+    can_view_feedback: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class RoleplaySession(Base):
+    """§4.2 — one turn-based voice roleplay conversation. `persona_ids` is a
+    JSON list: length 1 for single-persona (§4.2 first item), length 2+ for
+    multi-persona (§4.2 second item) — one column covers both rather than
+    duplicating the session model for what's really the same conversation
+    shape with more speakers on one side."""
+
+    __tablename__ = "roleplay_sessions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    persona_ids: Mapped[list[str]] = mapped_column(JSON)
+    scenario: Mapped[str] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String, default="active")  # "active" | "completed"
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class RoleplayTurn(Base):
+    """§4.2 — one line of dialogue. `speaker` is "user" or "persona";
+    `persona_id` identifies *which* persona spoke (null for user turns,
+    always set for persona turns — meaningful once there's more than one).
+    User turns carry the STT-transcribed text of a real recording, persona
+    turns are the (mock or real) LLM's reply text, spoken client-side via
+    the browser's SpeechSynthesis API."""
+
+    __tablename__ = "roleplay_turns"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    roleplay_session_id: Mapped[str] = mapped_column(ForeignKey("roleplay_sessions.id"))
+    turn_index: Mapped[int] = mapped_column(Integer)
+    speaker: Mapped[str] = mapped_column(String)
+    persona_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    text: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class CalendarConnection(Base):
+    """§4.2 — whether (and via which mock/real provider) a user has
+    connected a calendar. One row per user; connecting again just
+    updates it (no history of past connections needed)."""
+
+    __tablename__ = "calendar_connections"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), unique=True)
+    provider: Mapped[str] = mapped_column(String)
+    connected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
 _engine = create_engine(

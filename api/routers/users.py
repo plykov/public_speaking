@@ -16,10 +16,12 @@ from sqlalchemy.orm import Session as OrmSession
 
 from api.db import AnalysisResult, L1Profile, PracticeSession, Reminder, User, get_db
 from api.deps import get_object_store
+from api.l1_calibration import L1_CALIBRATION_PROFILES, get_calibration_profile
 from api.lifecycle import delete_user_data, export_user_data
 from api.schemas import (
     AttemptSummaryOut,
     CreateL1ProfileRequest,
+    L1CalibrationProfileOut,
     L1ProfileOut,
     ReminderOut,
     StreakOut,
@@ -30,6 +32,29 @@ from api.storage import ObjectStore
 from api.streaks import compute_streak
 
 router = APIRouter(prefix="/users", tags=["users"])
+catalog_router = APIRouter(tags=["users"])
+
+
+@catalog_router.get("/l1-calibration-profiles", response_model=list[L1CalibrationProfileOut])
+def list_l1_calibration_profiles() -> list[L1CalibrationProfileOut]:
+    """§4.2 catalog for onboarding's L1 picker — not user-scoped, so it lives
+    outside the `/users` prefix."""
+    return [
+        L1CalibrationProfileOut(code=p.code, label=p.label, calibration_note=p.calibration_note)
+        for p in L1_CALIBRATION_PROFILES
+    ]
+
+
+def _l1_profile_out(profile: L1Profile) -> L1ProfileOut:
+    note = get_calibration_profile(profile.first_language_code) if profile.first_language_code else None
+    return L1ProfileOut(
+        id=profile.id,
+        user_id=profile.user_id,
+        first_language=profile.first_language,
+        self_declared_confidence=profile.self_declared_confidence,
+        first_language_code=profile.first_language_code,
+        calibration_note=note.calibration_note if note else None,
+    )
 
 
 @router.post("", response_model=UserOut, status_code=201)
@@ -52,7 +77,7 @@ def get_user(user_id: str, db: OrmSession = Depends(get_db)) -> User:
 @router.put("/{user_id}/l1-profile", response_model=L1ProfileOut)
 def upsert_l1_profile(
     user_id: str, body: CreateL1ProfileRequest, db: OrmSession = Depends(get_db)
-) -> L1Profile:
+) -> L1ProfileOut:
     user = db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="user not found")
@@ -64,17 +89,18 @@ def upsert_l1_profile(
     else:
         profile.first_language = body.first_language
         profile.self_declared_confidence = body.self_declared_confidence
+        profile.first_language_code = body.first_language_code
     db.commit()
     db.refresh(profile)
-    return profile
+    return _l1_profile_out(profile)
 
 
 @router.get("/{user_id}/l1-profile", response_model=L1ProfileOut)
-def get_l1_profile(user_id: str, db: OrmSession = Depends(get_db)) -> L1Profile:
+def get_l1_profile(user_id: str, db: OrmSession = Depends(get_db)) -> L1ProfileOut:
     profile = db.query(L1Profile).filter_by(user_id=user_id).one_or_none()
     if profile is None:
         raise HTTPException(status_code=404, detail="no L1 profile for this user yet")
-    return profile
+    return _l1_profile_out(profile)
 
 
 @router.get("/{user_id}/export")

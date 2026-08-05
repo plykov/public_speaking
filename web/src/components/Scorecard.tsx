@@ -1,6 +1,8 @@
 "use client";
 
-import type { AnalysisResultOut } from "@/lib/api";
+import type { AnalysisResultOut, SlideDeckOut, SlideTransitionOut } from "@/lib/api";
+import { slideThumbnailUrl } from "@/lib/api";
+import { buildSlideLookup } from "@/lib/slideLinking";
 
 interface MetricsSummary {
   wpm_overall?: number;
@@ -62,14 +64,20 @@ export function Scorecard({
   previous,
   onSeek,
   onRate,
+  slideDeck,
+  slideTransitions,
 }: {
   result: AnalysisResultOut;
   previous?: AnalysisResultOut;
   onSeek?: (ms: number) => void;
   onRate?: (feedbackItemId: string, useful: boolean) => void;
+  /** §4.2 slide-linked transcript: when present, each evidence item shows the slide it was said on. */
+  slideDeck?: SlideDeckOut | null;
+  slideTransitions?: SlideTransitionOut[];
 }) {
   const summary = summaryOf(result);
   const prevSummary = previous ? summaryOf(previous) : undefined;
+  const slideLookup = slideDeck && slideTransitions ? buildSlideLookup(slideTransitions) : null;
 
   return (
     <div className="stack">
@@ -132,6 +140,20 @@ export function Scorecard({
                 </button>
               )}
             </p>
+            {slideLookup && slideDeck && (() => {
+              const slideIndex = slideLookup(item.evidence_start_ms);
+              return slideIndex === null ? null : (
+                <div className="row" style={{ alignItems: "center", gap: 6 }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element -- backend-served thumbnail */}
+                  <img
+                    src={slideThumbnailUrl(slideDeck.thumbnail_urls[slideIndex])}
+                    alt={`Slide ${slideIndex + 1}`}
+                    style={{ width: 48, border: "1px solid var(--border)", borderRadius: 4 }}
+                  />
+                  <span className="pill">Slide {slideIndex + 1}</span>
+                </div>
+              );
+            })()}
             {onRate && (
               <div className="row" style={{ marginTop: 4 }}>
                 <button

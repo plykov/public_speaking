@@ -79,16 +79,24 @@ upload (chunked, resumable) → normalize → STT → deterministic metrics
 | `api.routers.feedback` | §4.1 M6 | Thumbs up/down on a feedback item |
 | `api.routers.admin` | §6.5 | Raw-media retention purge (no scheduler in this environment — see below) |
 | `api.routers.billing` | §4.1 M12, §8.1 | Mock checkout, checkout confirmation, subscription status |
+| `api.routers.push` | §4.2 | VAPID public key, push subscribe/unsubscribe, real test-send |
 | `api.lifecycle` | §4.1 M11, §6.5 | Shared delete/export/retention logic — one code path for both session-delete and account-delete, so neither can drift and delete less than the other |
 | `api.streaks` | §4.1 M10 | `compute_streak()` — pure function, no DB access, same "pure core" pattern as `metrics/` |
 | `api.billing` | §4.1 M12, §8.1 | Entitlement logic (`effective_tier()`, `quota_exceeded()`) plus the no-real-Stripe provider seam — same pattern as `api.pipeline.stt` / `api.pipeline.llm` |
+| `api.push` | §4.2 | Real Web Push send (VAPID keys + `pywebpush`) — genuinely delivers, unlike the STT/LLM/Stripe seams; the gap is scheduling *when* to send, not the send itself |
+| `api.l1_calibration` | §4.2 | Catalog of nine L1 calibration profiles (RU/NL/DE/FR/ES/PT-BR/ZH/HI/JA) — real, authored content, no vendor dependency |
+| `api.slides` | §4.2 | PDF page count + thumbnail rendering (PyMuPDF) — real, deterministic, no vendor dependency (AGPL license caveat noted in the Phase 2 section) |
+| `api.sharing` | §4.2 | Token generation + expiry/revocation check for coach/manager share links — real, no vendor dependency |
+| `api.pipeline.exemplar` | §4.2 | Exemplar-mode seam + mock (same pattern as STT/LLM/billing) — real rewrite quality needs a frontier model, not available in this environment |
+| `api.pipeline.roleplay` | §4.2 | Persona catalog (3) + roleplay-reply seam/mock + multi-persona round-robin turn-picking. STT reused for real from `api.pipeline.stt`; TTS is genuinely real via the browser's `SpeechSynthesis` API, no mock needed |
+| `api.calendar` | §4.2 | Calendar-connection seam/mock (real Google/Microsoft OAuth needs an app registration not available here) + genuinely real imminent-event-to-drill matching |
 
 ### Data model (§6.4)
 
 | Table | §6.4 entity | Notes |
 |---|---|---|
 | `User` | `user` | Anonymous, device-scoped — no email/password. Auth is explicitly out of scope; the client holds the id (localStorage) |
-| `L1Profile` | `l1_profile` | First language + self-declared confidence. Read only by onboarding copy and the dev-mode sample-transcript picker — **never** by `api/pipeline/llm.py` or `metrics/report.py` |
+| `L1Profile` | `l1_profile` | First language + self-declared confidence, plus an optional §4.2 `first_language_code` for the L1 calibration catalog. Read only by onboarding copy and the dev-mode sample-transcript picker — **never** by `api/pipeline/llm.py` or `metrics/report.py` |
 | `PracticeSession` | `session` | Adds `user_id` and a self-referencing `parent_session_id` — a retry session points at the baseline it followed, which is §6.4's `attempt_link` relationship without a separate join table |
 | `MediaAsset` | `media_asset` | Unchanged — storage key only, never the audio bytes |
 | `TranscriptWord` | `transcript_segment` | Word-level: text, start/end ms, confidence, sequence index |
@@ -96,6 +104,12 @@ upload (chunked, resumable) → normalize → STT → deterministic metrics
 | `FeedbackItemRow` | `feedback_item` | Includes `user_rating` (nullable bool) for the M6 thumbs up/down |
 | `TranscriptCorrection` | — | Not a §6.4 entity — logs each M8 word-level correction (original/corrected text) with a snapshot of the speaker's L1 background, an ASR-quality-by-cohort signal per §6.6. Deleted along with its session (privacy over long-term analytics — see below) |
 | `Reminder` | `reminder` | Days + time-of-day preference for the M10 habit layer. Storing the preference is the whole scope — see below |
+| `PushSubscription` | — | Not a §6.4 entity — a browser's `PushSubscription.toJSON()` (endpoint + keys), for §4.2 Web Push. Unique on `endpoint`, since that *is* the subscription's identity |
+| `SlideDeck` | `slide_decks` | Not a §6.4 entity — one PDF per session (§4.2), storage key + page count |
+| `SlideTransition` | `slide_transitions` | Not a §6.4 entity — "advanced to slide N at elapsed-ms T" marks (§4.2), used client-side to link transcript evidence to a slide |
+| `ShareLink` | `share_links` | Not a §6.4 entity — a coach/manager share link (§4.2): token, three permission flags, optional expiry, soft-delete via `revoked_at` |
+| `RoleplaySession` / `RoleplayTurn` | `roleplay_sessions` / `roleplay_turns` | Not §6.4 entities — a turn-based voice roleplay conversation (§4.2, single- or multi-persona via `persona_ids`) and its dialogue lines (`persona_id` attributes each persona turn). No raw audio ever stored for a turn |
+| `CalendarConnection` | `calendar_connections` | Not a §6.4 entity — whether/which calendar provider (§4.2) a user has connected. One row per user |
 | `Subscription` | `subscription` | Tier/status/period-end for M12 billing — see below. A user with no row (or an expired `event_sprint`) is free-tier by construction, computed in `api.billing.effective_tier()`, never trusted from `.tier` alone |
 | `CheckoutSession` | — | Not a §6.4 entity — a pending mock checkout, resolved by the confirm endpoint standing in for a Stripe webhook |
 | `AnalysisResult` | — | Not a §6.4 entity — a per-attempt stamp of `rubric_version`/`model_version`, the computed metrics summary (kept as JSON: it's a derived aggregate, not a core entity), and a snapshot of the recommended drill |
@@ -155,6 +169,296 @@ non-expiring; `event_sprint` is unlimited for a rolling 30 days from
 confirmation, then reverts to free automatically — there's no
 "downgrade" event to handle, just `effective_tier()` recomputing on
 every read.
+
+## Phase 2
+
+### Web Push (§4.2 — "Installable PWA with Web Push")
+
+Unlike the STT/LLM/Stripe seams, **this one is real end to end on the
+send side** — no vendor account or API key needed, since the browser's
+own push service (e.g. Chrome's, via FCM) is used transparently once a
+client subscribes with our self-generated VAPID key. `api/push.py`
+generates a VAPID keypair (env vars persist it across restarts; unset,
+a fresh ephemeral one is generated per process — fine for dev, but every
+subscription made against it dies on the next restart) and sends via
+`pywebpush`.
+
+| Endpoint | Behavior |
+|---|---|
+| `GET /push/vapid-public-key` | The public key the frontend passes to `pushManager.subscribe()` |
+| `POST /users/{id}/push-subscriptions` | Register (or update, keyed by `endpoint`) a browser subscription |
+| `POST /users/{id}/push-subscriptions/unsubscribe` | Remove one |
+| `POST /users/{id}/push-subscriptions/test` | Send one real push to every subscription this user has; auto-removes any the push service reports as gone (404/410) |
+
+**The gap**: nothing decides *when* to send — there's no scheduler here
+to notice "it's time for this user's reminder window" (§4.1 M10's
+documented gap, same root cause as `purge-expired-media`). `test` is
+the only trigger that exists; wiring `Reminder` to actually fire one is
+a follow-up.
+
+**A real bug this caught**: a subscription with a slightly malformed
+`p256dh` key (valid-looking but wrong base64 padding — the kind of
+thing corrupted browser-side storage could produce) crashed
+`send_web_push` with an unhandled `binascii.Error` from deep inside
+`pywebpush`, before any network call was even attempted, returning a
+raw 500 instead of a handled failure. Fixed by broadening the catch and
+covered by a regression test (`test_send_web_push_malformed_key_does_not_raise`)
+— found via manual testing with a deliberately-malformed subscription,
+not by the unit tests, which is exactly why the manual pass matters.
+
+**Frontend**: `src/public/manifest.webmanifest` + `sw.js` (push,
+notificationclick, and a passthrough fetch handler some browsers still
+check for install-eligibility) + `src/lib/push.ts` + `PushSettings.tsx`
+on `/settings`. `layout.tsx` wires the manifest, theme color, and Apple
+home-screen-install meta (§4.2's explicit iOS note).
+
+**Verified live, and what couldn't be**: service worker registration
+and the Notification permission grant both work in this environment,
+confirmed via direct `page.evaluate` diagnostics with per-step
+timeouts. `pushManager.subscribe()` itself hangs indefinitely — it
+needs to reach the browser vendor's internal push-registration
+service, which this sandboxed container's browser can't do (backend-only
+HTTP through the environment's proxy doesn't cover Chromium's own
+network stack). That's an environment constraint on *testing* this
+specific browser call, not a defect in the implementation: the code
+path is identical to what any real deployed browser would run, and the
+send side was verified for real — registering a subscription with a
+genuine FCM-shaped endpoint and calling `/test` against it produces a
+real HTTP round-trip to `fcm.googleapis.com`, observable in the API
+logs and failing predictably (not silently) on fabricated key data.
+Given the hang was real (not just slow), `subscribeToPush()` now races
+against a 15s timeout with a clear error — a legitimate defensive fix
+independent of this sandbox, since `pushManager.subscribe()` has no
+built-in timeout and a stuck call previously left the UI's "Enabling…"
+button spinning forever with no way out.
+
+**Install note**: `pywebpush`'s `http-ece` dependency can fail to build
+on an old/distro-patched `pip`+`setuptools` combo (a `distutils`
+`install_layout` `AttributeError`) — if `pip install -e ".[dev]"` fails
+on it, upgrade `pip`/`setuptools`/`wheel` first (ideally in a venv) and
+retry.
+
+### L1 calibration profiles (§4.2 — "Additional L1 calibration profiles")
+
+Phase 1's onboarding stored "first language" as free text, shown back
+verbatim but taught the product nothing. `api/l1_calibration.py` adds a
+curated catalog for the nine languages named in scope (RU, NL, DE, FR, ES,
+PT-BR, ZH, HI, JA): each has a short, hedged calibration note about a
+documented L1→English transfer pattern relevant to meeting speech (e.g.
+topic-comment ordering, discourse register, hedging carried over from a more
+deferential first-language register) — never a claim about accent,
+intelligence, or "correctness." Same non-negotiable as before: **this is
+onboarding copy only** — `api/pipeline/llm.py` and `metrics/report.py` never
+read `L1Profile`, and adding a code here doesn't change that.
+
+| Endpoint | Behavior |
+|---|---|
+| `GET /l1-calibration-profiles` | The catalog: code, label, calibration note |
+| `PUT /users/{id}/l1-profile` | Now also accepts `first_language_code`; response includes a derived `calibration_note` (not stored — computed from the code on every read, so editing the catalog text doesn't require a data migration) |
+
+**Frontend**: onboarding's first-language field (`web/src/app/onboarding/page.tsx`)
+is now a chip picker fetched from the catalog, showing the relevant
+calibration note the moment a language is picked, plus an "Other / prefer
+not to say" option that falls back to the original free-text input — nobody
+outside the nine-language catalog loses the ability to onboard. Verified
+live: picking Russian shows its note, switching to Other reveals the text
+field, and submission reaches the recorder either way.
+
+### Slide/PDF upload with slide-linked transcript (§4.2)
+
+Real, no vendor gap: `api/slides.py` renders an uploaded PDF's page count
+and per-page PNG thumbnails using PyMuPDF (`fitz`) — deterministic, no
+LLM/network call, same "pure function over bytes" shape as `metrics/`.
+
+**License note, stated rather than hidden**: PyMuPDF's open-source
+distribution is AGPL-3.0. Fine for demonstrating this scope item; a real
+deployment shipping closed-source code alongside it would need Artifex's
+commercial license or a swap to a permissively-licensed renderer (e.g.
+shelling out to Poppler's `pdftoppm`) — a vendor-swap decision, not an
+architecture change, since everything downstream only depends on
+`count_pages`/`render_thumbnails`'s signatures.
+
+| Endpoint | Behavior |
+|---|---|
+| `POST /sessions/{id}/slides` | Upload/replace a session's PDF deck; renders + stores per-page thumbnails, returns page count + thumbnail URLs. Rejects non-PDF bytes with 422 |
+| `GET /sessions/{id}/slides` | Deck metadata + thumbnail URLs |
+| `GET /sessions/{id}/slides/{page}/thumbnail` | One page's PNG |
+| `PUT /sessions/{id}/slide-transitions` | Replace the full list of "advanced to slide N at elapsed-ms T" marks (same replace-not-append pattern as §4.1 M8's transcript correction) |
+| `GET /sessions/{id}/slide-transitions` | The current list, sorted by timestamp |
+
+**Slide-linking is computed client-side, not server-side.** `web/src/lib/slideLinking.ts`'s
+`buildSlideLookup()` takes the transitions list and returns a pure
+`(ms) => slideIndex` function — kept out of the transcript/evidence tables
+entirely so this feature never touches the deterministic pipeline's schema.
+`Scorecard.tsx` calls it per feedback item's `evidence_start_ms` to show a
+thumbnail + "Slide N" badge next to the evidence quote.
+
+**Frontend flow**: the baseline session is now created up front (moved out
+of `runAnalysis`, which previously created it lazily) so `SlideDeckPanel`
+has a session to attach the PDF to before recording starts.
+`RecorderPanel` grows optional `slidePageCount`/`onSlideAdvance` props: when
+a deck is present, a "Next slide →" button appears during recording and
+reports `(slideIndex, elapsedMs)` on click, using the same recording clock
+as `TranscriptWord.start_ms`. Transitions are submitted right before
+`/analyze` is called. Scoped to the baseline attempt only for now — the
+retry/drill recording doesn't yet get its own deck, a stated gap rather
+than a silent one.
+
+Verified live end to end via Playwright: uploaded a real 3-page PDF built
+with PyMuPDF, saw its thumbnails render in the upload panel, advanced
+slides during a real recording, and confirmed the resulting scorecard's
+feedback items each show the correct slide thumbnail + badge for their
+evidence timestamp.
+
+### Coach/manager share links (§4.2)
+
+Real, no vendor dependency. `api/sharing.py` generates an opaque
+`secrets.token_urlsafe` token — the token itself is the credential (an
+"anyone with the link" model, not a coach account/login). Three
+independent, opt-in-by-default-off permission flags control what a share
+link exposes: progress trend (on by default — the whole point of sharing),
+transcripts, and coaching feedback text. **Raw audio is never exposed
+through a share link, at any permission combination** — that's not a
+fourth flag that happens to default off, it's a property of what
+`GET /share/{token}` returns; the response schema (`SharedAttemptOut`) has
+no field capable of carrying it.
+
+| Endpoint | Behavior |
+|---|---|
+| `POST /users/{id}/share-links` | Create a link: optional label, three permission booleans, optional `expires_in_days` |
+| `GET /users/{id}/share-links` | List the owner's links (management view), each with a derived `revoked` flag |
+| `DELETE /users/{id}/share-links/{share_id}` | Revoke (soft-delete via `revoked_at`, not a hard delete — matches the audit-friendly pattern used elsewhere) |
+| `GET /share/{token}` | Public, no-login view. 404 for an unknown token, 410 Gone for revoked/expired — distinct statuses so a viewer isn't left guessing which |
+
+**Frontend**: `ShareLinkSettings.tsx` on `/settings` creates/lists/revokes
+links and copies the share URL to the clipboard. `web/src/app/share/[token]/page.tsx`
+is the public viewer — plain metric tiles, transcript, and feedback cards
+gated on whatever the link's permissions allow, with the "raw recordings
+are never included" statement shown up front rather than left implicit.
+
+Verified live end to end: created a user + analyzed session via the API,
+created a share link with feedback included from `/settings`, opened the
+generated `/share/{token}` URL and confirmed the metrics + feedback
+rendered, revoked the link from `/settings`, and confirmed the same URL
+now shows a clear "revoked or expired" message instead of a raw 410.
+
+### Exemplar mode (§4.2 — "show a stronger version and explain the delta")
+
+Same seam-plus-mock pattern as STT/LLM/billing: `api/pipeline/exemplar.py`
+defines an `ExemplarProvider` interface a real frontier-model integration
+would implement (compose a genuinely stronger, more naturally-phrased
+rewrite). `MockExemplarProvider` is deliberately *not* a language model —
+it only **reorders and removes what the speaker already said**: it moves
+the sentence containing a recognized recommendation marker
+(`metrics.point_position`'s detector) to the front, and strips detected
+hedge phrases (`metrics.hedging`'s detector), reusing the exact same
+deterministic detectors already in the pipeline rather than duplicating
+logic. This is stated as a mechanical demonstration of the "show the
+delta" UX, not a claim about rewrite quality — the frontend panel says so
+directly rather than passing the mock off as a real rewrite.
+
+| Endpoint | Behavior |
+|---|---|
+| `GET /sessions/{id}/exemplar` | Computed on demand from the stored transcript (not persisted — cheap to recompute, never stale after a §4.1 M8 transcript correction). 400 if the session has no transcript yet |
+
+**Frontend**: `ExemplarPanel.tsx` — a "Show a stronger version" button on
+both the baseline and retry scorecards reveals the original text, the
+rewritten text, and a bulleted "what changed" list. Verified live: recorded
+a baseline attempt with a hedge and a trailing recommendation, clicked
+through, and confirmed the panel correctly moved the recommendation
+sentence first and stripped the hedge, with an accurate explanation of
+both changes.
+
+### Voice AI roleplay — single- and multi-persona (§4.2 — "streaming STT → LLM → TTS")
+
+Three legs, three different levels of "real" in this environment:
+
+- **STT**: fully reused, not reimplemented — `api.deps.get_stt()`, the
+  same seam Practice Studio uses (mock here for the same reason: no live
+  vendor key). A roleplay turn's audio is transcribed in-memory from the
+  request body and **never stored** — tighter than the 30-day media
+  retention default elsewhere (§6.5), since there's no product reason to
+  keep it at all for a roleplay turn.
+- **LLM** (persona reply generation): same seam-plus-mock pattern as
+  `api.pipeline.llm`/`api.pipeline.exemplar`. `api/pipeline/roleplay.py`'s
+  `RoleplayLLMProvider` is what a real frontier-model integration
+  implements; `MockRoleplayLLMProvider` is rule-based — it reuses the
+  same `metrics.hedging` detector already in the pipeline to react when
+  the user hedges, and otherwise cycles through the persona's scripted
+  pressure questions. Not a language model, stated as such.
+- **TTS**: **genuinely real**, no mock needed — the persona's lines are
+  spoken aloud by the browser's native `SpeechSynthesis` API
+  (`web/src/lib/tts.ts`), the same "the browser already has this
+  capability, use it directly" move as Web Push's own push service.
+
+One session model covers both single- and multi-persona conversations —
+`RoleplaySession.persona_ids` is a JSON list, length 1 for single-persona,
+2+ for multi (§4.2's second roleplay item), rather than two separate
+session shapes for what's the same conversation with more speakers on one
+side. Three personas ship: Priya (skeptical stakeholder), Marcus
+(data-driven skeptic), Elena (time-pressured executive) — each with its
+own opening line, follow-up bank, and closing line.
+
+**Multi-persona turn-taking**: `pick_next_persona()` round-robins whose
+turn it is to respond (1st user turn → `persona_ids[0]`, 2nd →
+`persona_ids[1]`, ...), and a shared `GROUP_MAX_USER_TURNS` (4) closes the
+conversation regardless of how many personas are in it — a 3-persona panel
+doesn't take 3x as many rounds just because there are more speakers.
+`RoleplayTurn.persona_id` records which persona said which line so the
+frontend can attribute (and could pick different TTS voices per persona,
+not implemented here).
+
+| Endpoint | Behavior |
+|---|---|
+| `GET /roleplay-personas` | The catalog: id, name, role, description |
+| `POST /roleplay-sessions` | Create a session — `persona_id` (single) or `persona_ids` (multi, 2+); returns it with the first persona's opening line as turn 0 |
+| `GET /roleplay-sessions/{id}` | Full turn history + status (`active`/`completed`) |
+| `POST /roleplay-sessions/{id}/turns` | Submit one recorded turn (raw audio body): transcribes, appends the user turn, picks the next responding persona, generates + appends their reply, closes the conversation once the turn budget is spent |
+
+**Frontend**: `/roleplay` — select one persona, or multiple for a panel
+(toggled as chips), hear/see the opening line, respond via the same
+dev-mode sample-transcript picker Practice Studio uses (no live STT vendor
+in this environment, same documented gap), watch personas react and take
+turns, and see the conversation close out. Verified live for both modes:
+single-persona correctly detected a hedge ("maybe") and reacted to it
+mid-conversation; a 2-persona panel round-robinned correctly (Priya →
+Marcus → Priya → Marcus) and closed on the shared turn budget rather than
+per-persona, with each line correctly attributed to the persona who said it.
+
+### Calendar integration driving pre-meeting prompts (§4.2 — "the core retention mechanism")
+
+§8 calls calendar-triggered prompts "the highest-leverage feature in the
+entire document": *"Standup in 40 minutes — one interjection drill?"*
+The vendor gap here is the least workaroundable of any in this project —
+real Google Calendar/Microsoft Graph integration needs an actual OAuth app
+registration (client id/secret, redirect URI, consent screen), which isn't
+something a client-side trick (à la Web Push or SpeechSynthesis) can
+substitute for. So `api/calendar.py` follows the seam-plus-mock pattern
+one more time: `CalendarProvider` is what a real OAuth integration
+implements; `MockCalendarProvider` simulates a successful connection and
+returns two synthetic upcoming events (relative to "now," not
+wall-clock-fixed, so a demo run next week still works).
+
+**What's genuinely real**: matching an imminent event to a practice
+prompt. `next_prompt_worthy_event()` finds the earliest upcoming event
+within a lookahead window (60 min); `guess_drill_criterion()` maps an
+event's title to a relevant drill via simple keyword matching (standup →
+point-first clarity, 1:1 → structure, review → concision), reusing the
+existing `DRILL_CATALOG` (§4.1 M7) rather than inventing a parallel one.
+
+| Endpoint | Behavior |
+|---|---|
+| `POST /users/{id}/calendar/connect` | Simulates a successful connection (mock provider) |
+| `GET /users/{id}/calendar` | Connection status |
+| `DELETE /users/{id}/calendar` | Disconnect |
+| `GET /users/{id}/calendar/upcoming-prompt` | The genuinely real part: is there an imminent event, and if so which drill to suggest. No scheduler exists in this environment (same documented gap as `purge_expired_media`) to turn this into a proactive Web Push notification on its own — it's polled on demand instead (the frontend checks it on page load) |
+
+**Frontend**: `CalendarSettings.tsx` on `/settings` connects/disconnects;
+`UpcomingPromptBanner.tsx` on the home page polls the endpoint and — only
+when a real prompt exists — shows exactly the copy §8 describes, with a
+one-click link into the relevant drill. Verified live: connected the mock
+calendar, then confirmed the home page showed "Team Standup in 30 minutes
+— one-breath recommendation?" with a working link to the drill.
 
 ### Privacy controls (§4.1 M11, §6.5)
 
@@ -266,7 +570,10 @@ backend above.
   `POST /users` + `PUT /users/{id}/l1-profile`, stores the returned user
   id in `localStorage` (`src/lib/localUser.ts`), and hands off into the
   same baseline-recording flow with the context preselected via a query
-  param — no duplicate context picker.
+  param — no duplicate context picker. The first-language field is now a
+  chip picker sourced from `GET /l1-calibration-profiles` (§4.2), showing
+  a calibration note the moment a language is picked; an "Other / prefer
+  not to say" chip falls back to free text for anyone outside the catalog.
 - Flow implemented: onboarding → baseline recording → scorecard (one
   strength, up to three evidence-linked priorities each with a
   useful/not-useful rating, one drill) → retry the drill → before/after
@@ -311,6 +618,12 @@ backend above.
   analyses used," upgrading to Pro removes the counter entirely).
 - A four-link nav bar (Home/Practice/Progress/Settings) ties the pages
   together (`src/components/NavBar.tsx`).
+- **Installable PWA + Web Push** (§4.2): `manifest.webmanifest` + `sw.js`
+  make the app installable (including the iOS home-screen path §4.2
+  explicitly calls out); `PushSettings.tsx` on `/settings` wires real
+  subscribe/unsubscribe/test-send. See the Phase 2 section above for
+  what was verified live vs. what this sandbox's browser genuinely
+  can't reach.
 
 ### Running
 
@@ -335,12 +648,24 @@ onboarding is there to attach an L1 profile, not gate access.
 
 Auth (the `User` table is anonymous/device-scoped, not a login system),
 a real Stripe/STT/LLM vendor integration (all three follow the same
-provider-seam-plus-mock pattern), calendar integration, and everything
-in Phase 2/3 of the roadmap. That completes every §4.1 MVP checklist
-item (M1-M12) at the mock/seam level this environment allows — going
-further means real vendor credentials (Stripe, AssemblyAI/Deepgram, a
-frontier LLM) and infra (a task queue, a scheduler, a notification
-channel) this environment doesn't have.
+provider-seam-plus-mock pattern), and calendar integration. Every §4.1
+MVP checklist item (M1-M12) is complete at the mock/seam level this
+environment allows; going further on those means real vendor
+credentials (Stripe, AssemblyAI/Deepgram, a frontier LLM) this
+environment doesn't have. **All eight §4.2 (Phase 2) items are now
+built.** Web Push, L1 calibration profiles, slide/PDF-linked transcripts,
+and coach/manager share links are genuinely real end to end, no vendor
+gap (slides carry a stated PyMuPDF license caveat, not a functionality
+gap). Exemplar mode, voice roleplay (single- and multi-persona), and
+calendar integration use the same seam-plus-mock pattern as
+STT/LLM/billing: the plumbing is real (STT reuse, turn-based state
+machine with round-robin multi-persona turn-taking, browser-native TTS,
+imminent-event-to-drill matching), but a truly stronger *rewrite*,
+*conversational reply*, or *calendar OAuth connection* needs
+infrastructure (a frontier model, a real Google/Microsoft app
+registration) this environment doesn't have, so those specific pieces are
+mocked and say so in the UI. Phase 3 (team workspaces, SSO, LMS,
+consented meeting-recording analysis) is still ahead.
 
 ## Testing
 
@@ -352,4 +677,4 @@ pytest --cov=metrics --cov=api --cov-report=term-missing
 cd web && npx tsc --noEmit && npm run lint && npm run build
 ```
 
-153 backend tests, 99% line coverage as of this commit.
+283 backend tests, 99% line coverage as of this commit.

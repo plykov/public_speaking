@@ -21,6 +21,7 @@ class UserOut(BaseModel):
 class CreateL1ProfileRequest(BaseModel):
     first_language: str
     self_declared_confidence: str  # e.g. "building" | "comfortable" | "fluent" — copy/calibration only
+    first_language_code: str | None = None  # §4.2: catalog code, e.g. "ru" — see api/l1_calibration.py
 
 
 class L1ProfileOut(BaseModel):
@@ -30,6 +31,14 @@ class L1ProfileOut(BaseModel):
     user_id: str
     first_language: str
     self_declared_confidence: str
+    first_language_code: str | None = None
+    calibration_note: str | None = None  # §4.2 — derived from first_language_code, never stored
+
+
+class L1CalibrationProfileOut(BaseModel):
+    code: str
+    label: str
+    calibration_note: str
 
 
 class CreateSessionRequest(BaseModel):
@@ -182,3 +191,187 @@ class SubscriptionOut(BaseModel):
     current_period_end: datetime | None
     analyses_this_month: int
     analyses_limit: int | None  # None = unlimited
+
+
+class VapidPublicKeyOut(BaseModel):
+    public_key: str
+
+
+class PushSubscriptionKeys(BaseModel):
+    p256dh: str
+    auth: str
+
+
+class PushSubscribeRequest(BaseModel):
+    """The shape `PushSubscription.toJSON()` produces in the browser."""
+
+    endpoint: str
+    keys: PushSubscriptionKeys
+
+
+class PushUnsubscribeRequest(BaseModel):
+    endpoint: str
+
+
+class PushTestResult(BaseModel):
+    sent: int
+    failed: int
+    removed_stale: int
+
+
+class SlideDeckOut(BaseModel):
+    filename: str
+    page_count: int
+    thumbnail_urls: list[str]  # index-ordered, one per page
+
+
+class SlideTransitionIn(BaseModel):
+    slide_index: int
+    timestamp_ms: int
+
+    @field_validator("slide_index")
+    @classmethod
+    def _non_negative_index(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("slide_index must be >= 0")
+        return value
+
+    @field_validator("timestamp_ms")
+    @classmethod
+    def _non_negative_timestamp(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("timestamp_ms must be >= 0")
+        return value
+
+
+class UpsertSlideTransitionsRequest(BaseModel):
+    transitions: list[SlideTransitionIn]
+
+
+class SlideTransitionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    slide_index: int
+    timestamp_ms: int
+
+
+class CreateShareLinkRequest(BaseModel):
+    label: str | None = None
+    can_view_progress: bool = True
+    can_view_transcripts: bool = False
+    can_view_feedback: bool = False
+    expires_in_days: int | None = None  # convenience; server converts to expires_at
+
+    @field_validator("expires_in_days")
+    @classmethod
+    def _positive_expiry(cls, value: int | None) -> int | None:
+        if value is not None and value <= 0:
+            raise ValueError("expires_in_days must be positive")
+        return value
+
+
+class ShareLinkOut(BaseModel):
+    id: str
+    token: str
+    label: str | None
+    can_view_progress: bool
+    can_view_transcripts: bool
+    can_view_feedback: bool
+    created_at: datetime
+    expires_at: datetime | None
+    revoked: bool
+
+
+class SharedFeedbackItemOut(BaseModel):
+    criterion: str
+    observation: str
+    rationale: str
+    repair: str
+
+
+class SharedAttemptOut(BaseModel):
+    session_id: str
+    scenario: str
+    created_at: datetime
+    # Each of these is None when the link's corresponding permission is off —
+    # not omitted, so a coach/manager viewer can see plainly what wasn't shared.
+    wpm_overall: float | None = None
+    filler_rate_per_100_words: float | None = None
+    hedging_rate_per_100_words: float | None = None
+    point_position_score: float | None = None
+    transcript_text: str | None = None
+    feedback_items: list[SharedFeedbackItemOut] | None = None
+
+
+class SharedViewOut(BaseModel):
+    label: str | None
+    can_view_progress: bool
+    can_view_transcripts: bool
+    can_view_feedback: bool
+    attempts: list[SharedAttemptOut]
+
+
+class ExemplarOut(BaseModel):
+    """§4.2 exemplar mode: a stronger version of the attempt + the delta."""
+
+    original_text: str
+    rewritten_text: str
+    explanation: list[str]
+    model_version: str
+
+
+class RoleplayPersonaOut(BaseModel):
+    id: str
+    name: str
+    role: str
+    description: str
+
+
+class CreateRoleplaySessionRequest(BaseModel):
+    """Single-persona: set `persona_id`. Multi-persona (§4.2): set
+    `persona_ids` instead (2+ ids) — exactly one of the two must be set."""
+
+    persona_id: str | None = None
+    persona_ids: list[str] | None = None
+    scenario: str = "roleplay"
+    user_id: str | None = None
+
+
+class RoleplayTurnOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    turn_index: int
+    speaker: str
+    persona_id: str | None = None  # which persona spoke; null for user turns
+    text: str
+
+
+class RoleplaySessionOut(BaseModel):
+    id: str
+    persona_ids: list[str]
+    scenario: str
+    status: str
+    turns: list[RoleplayTurnOut]
+
+
+class SubmitRoleplayTurnResponse(BaseModel):
+    session_status: str
+    new_turns: list[RoleplayTurnOut]
+
+
+class ConnectCalendarRequest(BaseModel):
+    provider: str = "mock"
+
+
+class CalendarConnectionOut(BaseModel):
+    connected: bool
+    provider: str | None = None
+
+
+class UpcomingPromptOut(BaseModel):
+    """§4.2 pre-meeting prompt: 'Standup in 40 minutes — one interjection drill?'"""
+
+    has_prompt: bool
+    event_title: str | None = None
+    minutes_until: int | None = None
+    drill: DrillOut | None = None

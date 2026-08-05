@@ -14,13 +14,26 @@ function formatMs(ms: number): string {
 export function RecorderPanel({
   prompt,
   onComplete,
+  slidePageCount,
+  onSlideAdvance,
 }: {
   prompt: string;
   onComplete: (audioUrl: string) => void;
+  /** §4.2 slide-linked transcript: total pages in the uploaded deck, if any. */
+  slidePageCount?: number;
+  /** Called with (slideIndex, elapsedMs) each time the presenter advances a slide. */
+  onSlideAdvance?: (slideIndex: number, elapsedMs: number) => void;
 }) {
   const { status, level, elapsedMs, audioUrl, error, requestMic, start, stop, reset } =
     useAudioRecorder();
   const [countdown, setCountdown] = useState<number | null>(null);
+  const [slideIndex, setSlideIndex] = useState(0);
+
+  function advanceSlide() {
+    const next = slideIndex + 1;
+    setSlideIndex(next);
+    onSlideAdvance?.(next, elapsedMs);
+  }
 
   function runCountdown(n: number) {
     setCountdown(n);
@@ -28,6 +41,10 @@ export function RecorderPanel({
       setTimeout(() => {
         setCountdown(null);
         start();
+        if (slidePageCount) {
+          setSlideIndex(0);
+          onSlideAdvance?.(0, 0);
+        }
       }, 500);
       return;
     }
@@ -95,6 +112,16 @@ export function RecorderPanel({
           <div className="timer" aria-live="polite">
             {formatMs(elapsedMs)}
           </div>
+          {slidePageCount ? (
+            <div className="row">
+              <button className="btn" onClick={advanceSlide} disabled={slideIndex + 1 >= slidePageCount}>
+                Next slide →
+              </button>
+              <span className="pill">
+                Slide {slideIndex + 1} of {slidePageCount}
+              </span>
+            </div>
+          ) : null}
           <button className="btn btn-danger" onClick={stop}>
             Stop
           </button>

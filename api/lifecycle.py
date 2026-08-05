@@ -15,18 +15,26 @@ from sqlalchemy.orm import Session as OrmSession
 
 from api.db import (
     AnalysisResult,
+    CalendarConnection,
     CheckoutSession,
     FeedbackItemRow,
     L1Profile,
     MediaAsset,
     MetricEventRow,
     PracticeSession,
+    PushSubscription,
     Reminder,
+    RoleplaySession,
+    RoleplayTurn,
+    ShareLink,
+    SlideDeck,
+    SlideTransition,
     Subscription,
     TranscriptCorrection,
     TranscriptWord,
     User,
 )
+from api.slides import slide_thumbnail_key
 from api.storage import ObjectStore
 
 DEFAULT_RETENTION_DAYS = 30
@@ -45,6 +53,13 @@ def delete_session_data(db: OrmSession, store: ObjectStore, session_id: str) -> 
     Losing correction history on delete is the accepted cost.
     """
     store.delete(_media_key(session_id))
+    deck = db.query(SlideDeck).filter_by(session_id=session_id).one_or_none()
+    if deck is not None:
+        store.delete(deck.storage_key)
+        for page in range(deck.page_count):
+            store.delete(slide_thumbnail_key(session_id, page))
+    db.query(SlideTransition).filter_by(session_id=session_id).delete()
+    db.query(SlideDeck).filter_by(session_id=session_id).delete()
     db.query(TranscriptCorrection).filter_by(session_id=session_id).delete()
     db.query(TranscriptWord).filter_by(session_id=session_id).delete()
     db.query(MetricEventRow).filter_by(session_id=session_id).delete()
@@ -56,12 +71,22 @@ def delete_session_data(db: OrmSession, store: ObjectStore, session_id: str) -> 
 
 def delete_user_data(db: OrmSession, store: ObjectStore, user_id: str) -> None:
     """Account delete: every session's data, the L1 profile, reminder
-    preference, subscription/billing records, and the user row."""
+    preference, push subscriptions, subscription/billing records, and the
+    user row."""
     session_ids = [s.id for s in db.query(PracticeSession.id).filter_by(user_id=user_id).all()]
     for session_id in session_ids:
         delete_session_data(db, store, session_id)
     db.query(L1Profile).filter_by(user_id=user_id).delete()
     db.query(Reminder).filter_by(user_id=user_id).delete()
+    db.query(ShareLink).filter_by(user_id=user_id).delete()
+    roleplay_session_ids = [
+        r.id for r in db.query(RoleplaySession.id).filter_by(user_id=user_id).all()
+    ]
+    for rid in roleplay_session_ids:
+        db.query(RoleplayTurn).filter_by(roleplay_session_id=rid).delete()
+    db.query(RoleplaySession).filter_by(user_id=user_id).delete()
+    db.query(CalendarConnection).filter_by(user_id=user_id).delete()
+    db.query(PushSubscription).filter_by(user_id=user_id).delete()
     db.query(CheckoutSession).filter_by(user_id=user_id).delete()
     db.query(Subscription).filter_by(user_id=user_id).delete()
     db.query(User).filter_by(id=user_id).delete()

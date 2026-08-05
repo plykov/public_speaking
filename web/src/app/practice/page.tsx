@@ -1,13 +1,23 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { RecorderPanel } from "@/components/RecorderPanel";
 import { DevTranscriptPicker } from "@/components/DevTranscriptPicker";
 import { Scorecard } from "@/components/Scorecard";
 import { EditableTranscript } from "@/components/EditableTranscript";
-import { createSession, analyzeSession, rateFeedbackItem, type AnalysisResultOut } from "@/lib/api";
+import { SlideDeckPanel } from "@/components/SlideDeckPanel";
+import { ExemplarPanel } from "@/components/ExemplarPanel";
+import {
+  createSession,
+  analyzeSession,
+  rateFeedbackItem,
+  upsertSlideTransitions,
+  type AnalysisResultOut,
+  type SlideDeckOut,
+  type SlideTransitionOut,
+} from "@/lib/api";
 import { uploadBlobChunked } from "@/lib/chunkedUpload";
 import { SAMPLE_TRANSCRIPTS } from "@/lib/sampleTranscripts";
 import { CONTEXTS } from "@/lib/contexts";
@@ -25,13 +35,13 @@ type Step =
 async function runAnalysis(
   scenario: string,
   transcriptId: string,
-  options: { userId?: string; parentSessionId?: string },
+  options: { userId?: string; parentSessionId?: string; existingSessionId?: string },
 ): Promise<AnalysisResultOut> {
   const sample = SAMPLE_TRANSCRIPTS.find((t) => t.id === transcriptId) ?? SAMPLE_TRANSCRIPTS[0];
-  const session = await createSession(scenario, options);
+  const sessionId = options.existingSessionId ?? (await createSession(scenario, options)).id;
   const blob = new Blob([JSON.stringify(sample.words)], { type: "application/json" });
-  await uploadBlobChunked(session.id, blob);
-  return analyzeSession(session.id);
+  await uploadBlobChunked(sessionId, blob);
+  return analyzeSession(sessionId);
 }
 
 function applyRating(
@@ -61,14 +71,33 @@ function PracticeStudioInner() {
   const [error, setError] = useState<string | null>(null);
   const [quotaExceeded, setQuotaExceeded] = useState(false);
 
+  // §4.2 slide-linked transcript: the session is created up front (rather
+  // than inside runAnalysis) so a slide deck and its transitions have
+  // somewhere to attach before the recording is even analyzed.
+  const [baselineSessionId, setBaselineSessionId] = useState<string | null>(null);
+  const [slideDeck, setSlideDeck] = useState<SlideDeckOut | null>(null);
+  const [slideTransitions, setSlideTransitions] = useState<SlideTransitionOut[]>([]);
+
+  useEffect(() => {
+    if (step === "baseline-record" && baselineSessionId === null) {
+      createSession(context.id, { userId: getStoredUserId() ?? undefined }).then((session) =>
+        setBaselineSessionId(session.id),
+      );
+    }
+  }, [step, baselineSessionId, context.id]);
+
   async function handleBaselineComplete(audioUrl: string) {
     setRecordedUrl(audioUrl);
     setStep("baseline-analyzing");
     setError(null);
     setQuotaExceeded(false);
     try {
+      if (baselineSessionId && slideTransitions.length > 0) {
+        await upsertSlideTransitions(baselineSessionId, slideTransitions);
+      }
       const result = await runAnalysis(context.id, transcriptId, {
         userId: getStoredUserId() ?? undefined,
+        existingSessionId: baselineSessionId ?? undefined,
       });
       setBaselineResult(result);
       setStep("baseline-result");
@@ -150,12 +179,25 @@ function PracticeStudioInner() {
           <button className="btn btn-primary" onClick={() => setStep("baseline-record")}>
             Start baseline recording
           </button>
+          <Link href="/roleplay" className="pill" style={{ width: "fit-content" }}>
+            Or try a voice roleplay →
+          </Link>
         </div>
       )}
 
       {step === "baseline-record" && (
         <div className="stack">
-          <RecorderPanel prompt={context.prompt} onComplete={handleBaselineComplete} />
+          {baselineSessionId && (
+            <SlideDeckPanel sessionId={baselineSessionId} deck={slideDeck} onUploaded={setSlideDeck} />
+          )}
+          <RecorderPanel
+            prompt={context.prompt}
+            onComplete={handleBaselineComplete}
+            slidePageCount={slideDeck?.page_count}
+            onSlideAdvance={(slideIndex, elapsedMs) =>
+              setSlideTransitions((prev) => [...prev, { slide_index: slideIndex, timestamp_ms: elapsedMs }])
+            }
+          />
           <DevTranscriptPicker selectedId={transcriptId} onSelect={setTranscriptId} />
         </div>
       )}
@@ -168,8 +210,11 @@ function PracticeStudioInner() {
           <Scorecard
             result={baselineResult}
             onRate={(id, useful) => handleRate("baseline", id, useful)}
+            slideDeck={slideDeck}
+            slideTransitions={slideTransitions}
           />
           <EditableTranscript sessionId={baselineResult.session_id} onReanalyzed={setBaselineResult} />
+          <ExemplarPanel sessionId={baselineResult.session_id} />
           <button className="btn btn-primary" onClick={() => setStep("drill-record")}>
             Try the drill: {baselineResult.drill.title}
           </button>
@@ -195,6 +240,7 @@ function PracticeStudioInner() {
             onRate={(id, useful) => handleRate("retry", id, useful)}
           />
           <EditableTranscript sessionId={retryResult.session_id} onReanalyzed={setRetryResult} />
+          <ExemplarPanel sessionId={retryResult.session_id} />
           <button
             className="btn"
             onClick={() => {
@@ -202,6 +248,9 @@ function PracticeStudioInner() {
               setBaselineResult(null);
               setRetryResult(null);
               setRecordedUrl(null);
+              setBaselineSessionId(null);
+              setSlideDeck(null);
+              setSlideTransitions([]);
             }}
           >
             Start a new attempt
