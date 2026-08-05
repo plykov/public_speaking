@@ -87,6 +87,10 @@ export function RecorderPanel({
 
       {status === "recording" && (
         <div className="stack">
+          <div className="recording-indicator" role="status" aria-live="assertive">
+            <span className="recording-dot" />
+            Recording
+          </div>
           <LevelMeter level={level} />
           <div className="timer" aria-live="polite">
             {formatMs(elapsedMs)}

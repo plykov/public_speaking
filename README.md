@@ -75,8 +75,10 @@ upload (chunked, resumable) → normalize → STT → deterministic metrics
 | `api.pipeline.orchestrator` | §6.3 | `run_pipeline()` — the single function a worker (Celery/Arq in production) would call |
 | `api.db` | §6.4 | Normalized SQLAlchemy models — see the schema table below |
 | `api.routers.sessions` | — | HTTP surface: create session, chunked upload, analyze, fetch result, one-click delete (§4.1 M11) |
-| `api.routers.users` | §4.1 M1 | Onboarding: create an anonymous user, upsert their L1 profile |
+| `api.routers.users` | §4.1 M1, M11 | Onboarding (create user, upsert L1 profile), plus account export and account delete |
 | `api.routers.feedback` | §4.1 M6 | Thumbs up/down on a feedback item |
+| `api.routers.admin` | §6.5 | Raw-media retention purge (no scheduler in this environment — see below) |
+| `api.lifecycle` | §4.1 M11, §6.5 | Shared delete/export/retention logic — one code path for both session-delete and account-delete, so neither can drift and delete less than the other |
 
 ### Data model (§6.4)
 
@@ -103,6 +105,24 @@ plain string — no admin CRUD for scenarios was in scope),
 Progress), `reminder` (§4.1 M10, Habit layer), `subscription` (§4.1
 M12, Billing) — none of those were part of the schema/onboarding work
 this covers.
+
+### Privacy controls (§4.1 M11, §6.5)
+
+| Endpoint | Behavior |
+|---|---|
+| `DELETE /sessions/{id}` | One-click session delete — media + every derived row for that session |
+| `DELETE /users/{id}` | Account delete — every session's data (via the same code path above), the L1 profile, and the user row |
+| `GET /users/{id}/export` | Full export — profile + every session's transcript, metrics summary, and feedback, as JSON |
+| `POST /admin/purge-expired-media?retention_days=30` | Deletes raw media older than the retention window; **derived metrics and feedback are untouched** — only the audio bytes and the `MediaAsset` row go |
+
+`purge-expired-media` stands in for the scheduled job production would
+run (§6.1 Celery/Arq beat, or a cron trigger) — this environment has no
+scheduler, so it's an endpoint an operator or a real cron job calls.
+It has no auth, which is fine for local dev but is a tracked gap before
+any real deployment (needs an internal network boundary or admin
+credential — out of scope here since auth itself is out of scope).
+User-pinning a recording past the retention window (mentioned in §6.5)
+isn't implemented — the purge is unconditional today.
 
 ### Running
 
@@ -193,8 +213,19 @@ backend above.
   history — pulled from `GET /users/{id}/attempts`. Self-relative only,
   by design: no percentile ranking against other users, matching the
   scope doc's stated reasoning that such scores are "proxies with
-  contested validity" (§2.3). A three-link nav bar (Home/Practice/Progress)
-  ties the pages together (`src/components/NavBar.tsx`).
+  contested validity" (§2.3).
+- **Settings** (`src/app/settings/page.tsx`, §4.1 M11): export your data
+  (downloads the `GET /users/{id}/export` JSON as a file) and delete
+  your account (two-click confirm — the button re-labels itself "click
+  again to confirm" rather than the scope's literal "one-click," since
+  an irreversible action deserves a beat of friction; still no modal
+  dialog).
+- **Visible recording indicator** (§6.5): `RecorderPanel` shows a
+  pulsing red dot + "Recording" label — `role="status"
+  aria-live="assertive"` — for the entire duration a session is
+  actually recording, not just implied by the timer running.
+- A four-link nav bar (Home/Practice/Progress/Settings) ties the pages
+  together (`src/components/NavBar.tsx`).
 
 ### Running
 
@@ -232,4 +263,4 @@ pytest --cov=metrics --cov=api --cov-report=term-missing
 cd web && npx tsc --noEmit && npm run lint && npm run build
 ```
 
-90 backend tests, 99% line coverage as of this commit.
+97 backend tests, 98% line coverage as of this commit.
