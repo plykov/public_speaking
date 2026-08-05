@@ -168,3 +168,14 @@ export async function getAttempts(userId: string): Promise<AttemptSummaryOut[]> 
   const res = await fetch(`${API_BASE}/users/${userId}/attempts`);
   return asJson<AttemptSummaryOut[]>(res);
 }
+
+/** Full account export (§4.1 M11) — profile + every session's transcript, metrics, feedback. */
+export async function exportUserData(userId: string): Promise<Record<string, unknown>> {
+  const res = await fetch(`${API_BASE}/users/${userId}/export`);
+  return asJson<Record<string, unknown>>(res);
+}
+
+/** Account delete (§4.1 M11, §6.5) — every session's media/rows, the L1 profile, and the user row. */
+export async function deleteAccount(userId: string): Promise<void> {
+  await fetch(`${API_BASE}/users/${userId}`, { method: "DELETE" });
+}

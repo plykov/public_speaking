@@ -25,6 +25,7 @@ from api.db import (
     get_db,
 )
 from api.deps import get_llm, get_normalizer, get_object_store, get_stt
+from api.lifecycle import delete_session_data
 from api.pipeline.llm import ScenarioRubric
 from api.pipeline.orchestrator import run_pipeline
 from api.schemas import (
@@ -266,12 +267,6 @@ def delete_session(
     store: ObjectStore = Depends(get_object_store),
 ) -> None:
     """One-click session delete (§4.1 M11, §6.5)."""
-    session = _get_session_or_404(session_id, db)
-    store.delete(_media_key(session_id))
-    db.query(TranscriptWord).filter_by(session_id=session_id).delete()
-    db.query(MetricEventRow).filter_by(session_id=session_id).delete()
-    db.query(FeedbackItemRow).filter_by(session_id=session_id).delete()
-    db.query(AnalysisResult).filter_by(session_id=session_id).delete()
-    db.query(MediaAsset).filter_by(session_id=session_id).delete()
-    db.delete(session)
+    _get_session_or_404(session_id, db)
+    delete_session_data(db, store, session_id)
     db.commit()
