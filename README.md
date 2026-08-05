@@ -86,6 +86,7 @@ upload (chunked, resumable) → normalize → STT → deterministic metrics
 | `api.push` | §4.2 | Real Web Push send (VAPID keys + `pywebpush`) — genuinely delivers, unlike the STT/LLM/Stripe seams; the gap is scheduling *when* to send, not the send itself |
 | `api.l1_calibration` | §4.2 | Catalog of nine L1 calibration profiles (RU/NL/DE/FR/ES/PT-BR/ZH/HI/JA) — real, authored content, no vendor dependency |
 | `api.slides` | §4.2 | PDF page count + thumbnail rendering (PyMuPDF) — real, deterministic, no vendor dependency (AGPL license caveat noted in the Phase 2 section) |
+| `api.sharing` | §4.2 | Token generation + expiry/revocation check for coach/manager share links — real, no vendor dependency |
 
 ### Data model (§6.4)
 
@@ -103,6 +104,7 @@ upload (chunked, resumable) → normalize → STT → deterministic metrics
 | `PushSubscription` | — | Not a §6.4 entity — a browser's `PushSubscription.toJSON()` (endpoint + keys), for §4.2 Web Push. Unique on `endpoint`, since that *is* the subscription's identity |
 | `SlideDeck` | `slide_decks` | Not a §6.4 entity — one PDF per session (§4.2), storage key + page count |
 | `SlideTransition` | `slide_transitions` | Not a §6.4 entity — "advanced to slide N at elapsed-ms T" marks (§4.2), used client-side to link transcript evidence to a slide |
+| `ShareLink` | `share_links` | Not a §6.4 entity — a coach/manager share link (§4.2): token, three permission flags, optional expiry, soft-delete via `revoked_at` |
 | `Subscription` | `subscription` | Tier/status/period-end for M12 billing — see below. A user with no row (or an expired `event_sprint`) is free-tier by construction, computed in `api.billing.effective_tier()`, never trusted from `.tier` alone |
 | `CheckoutSession` | — | Not a §6.4 entity — a pending mock checkout, resolved by the confirm endpoint standing in for a Stripe webhook |
 | `AnalysisResult` | — | Not a §6.4 entity — a per-attempt stamp of `rubric_version`/`model_version`, the computed metrics summary (kept as JSON: it's a derived aggregate, not a core entity), and a snapshot of the recommended drill |
@@ -303,6 +305,38 @@ slides during a real recording, and confirmed the resulting scorecard's
 feedback items each show the correct slide thumbnail + badge for their
 evidence timestamp.
 
+### Coach/manager share links (§4.2)
+
+Real, no vendor dependency. `api/sharing.py` generates an opaque
+`secrets.token_urlsafe` token — the token itself is the credential (an
+"anyone with the link" model, not a coach account/login). Three
+independent, opt-in-by-default-off permission flags control what a share
+link exposes: progress trend (on by default — the whole point of sharing),
+transcripts, and coaching feedback text. **Raw audio is never exposed
+through a share link, at any permission combination** — that's not a
+fourth flag that happens to default off, it's a property of what
+`GET /share/{token}` returns; the response schema (`SharedAttemptOut`) has
+no field capable of carrying it.
+
+| Endpoint | Behavior |
+|---|---|
+| `POST /users/{id}/share-links` | Create a link: optional label, three permission booleans, optional `expires_in_days` |
+| `GET /users/{id}/share-links` | List the owner's links (management view), each with a derived `revoked` flag |
+| `DELETE /users/{id}/share-links/{share_id}` | Revoke (soft-delete via `revoked_at`, not a hard delete — matches the audit-friendly pattern used elsewhere) |
+| `GET /share/{token}` | Public, no-login view. 404 for an unknown token, 410 Gone for revoked/expired — distinct statuses so a viewer isn't left guessing which |
+
+**Frontend**: `ShareLinkSettings.tsx` on `/settings` creates/lists/revokes
+links and copies the share URL to the clipboard. `web/src/app/share/[token]/page.tsx`
+is the public viewer — plain metric tiles, transcript, and feedback cards
+gated on whatever the link's permissions allow, with the "raw recordings
+are never included" statement shown up front rather than left implicit.
+
+Verified live end to end: created a user + analyzed session via the API,
+created a share link with feedback included from `/settings`, opened the
+generated `/share/{token}` URL and confirmed the metrics + feedback
+rendered, revoked the link from `/settings`, and confirmed the same URL
+now shows a clear "revoked or expired" message instead of a raw 410.
+
 ### Privacy controls (§4.1 M11, §6.5)
 
 | Endpoint | Behavior |
@@ -495,12 +529,12 @@ provider-seam-plus-mock pattern), and calendar integration. Every §4.1
 MVP checklist item (M1-M12) is complete at the mock/seam level this
 environment allows; going further on those means real vendor
 credentials (Stripe, AssemblyAI/Deepgram, a frontier LLM) this
-environment doesn't have. Web Push, L1 calibration profiles, and
-slide/PDF-linked transcripts (all §4.2) are the three Phase 2 items
-completed so far — all genuinely real, no vendor gap (slides carry a
-stated PyMuPDF license caveat, not a functionality gap). Everything else
-in Phase 2/3 (voice roleplay, exemplar mode, coach share links, calendar
-integration, team workspaces) is still ahead.
+environment doesn't have. Web Push, L1 calibration profiles,
+slide/PDF-linked transcripts, and coach/manager share links (all §4.2)
+are the four Phase 2 items completed so far — all genuinely real, no
+vendor gap (slides carry a stated PyMuPDF license caveat, not a
+functionality gap). Everything else in Phase 2/3 (voice roleplay,
+exemplar mode, calendar integration, team workspaces) is still ahead.
 
 ## Testing
 
@@ -512,4 +546,4 @@ pytest --cov=metrics --cov=api --cov-report=term-missing
 cd web && npx tsc --noEmit && npm run lint && npm run build
 ```
 
-200 backend tests, 99% line coverage as of this commit.
+221 backend tests, 99% line coverage as of this commit.

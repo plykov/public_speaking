@@ -304,6 +304,30 @@ class SlideTransition(Base):
     timestamp_ms: Mapped[int] = mapped_column(Integer)
 
 
+class ShareLink(Base):
+    """§4.2 — a private, tokenized read-only view for a coach/manager.
+
+    No login for the viewer: the token itself is the credential (like a
+    Google Docs "anyone with the link" share, not an account). Three
+    independent permission flags, all opt-in and false by default —
+    raw audio is never exposed through this at any permission setting,
+    that's not a flag, it's a property of what the endpoint returns.
+    """
+
+    __tablename__ = "share_links"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    token: Mapped[str] = mapped_column(String, unique=True)
+    label: Mapped[str | None] = mapped_column(String, nullable=True)
+    can_view_progress: Mapped[bool] = mapped_column(Boolean, default=True)
+    can_view_transcripts: Mapped[bool] = mapped_column(Boolean, default=False)
+    can_view_feedback: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 _engine = create_engine(
     settings.database_url,
     connect_args={"check_same_thread": False} if settings.database_url.startswith("sqlite") else {},

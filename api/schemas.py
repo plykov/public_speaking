@@ -253,3 +253,59 @@ class SlideTransitionOut(BaseModel):
 
     slide_index: int
     timestamp_ms: int
+
+
+class CreateShareLinkRequest(BaseModel):
+    label: str | None = None
+    can_view_progress: bool = True
+    can_view_transcripts: bool = False
+    can_view_feedback: bool = False
+    expires_in_days: int | None = None  # convenience; server converts to expires_at
+
+    @field_validator("expires_in_days")
+    @classmethod
+    def _positive_expiry(cls, value: int | None) -> int | None:
+        if value is not None and value <= 0:
+            raise ValueError("expires_in_days must be positive")
+        return value
+
+
+class ShareLinkOut(BaseModel):
+    id: str
+    token: str
+    label: str | None
+    can_view_progress: bool
+    can_view_transcripts: bool
+    can_view_feedback: bool
+    created_at: datetime
+    expires_at: datetime | None
+    revoked: bool
+
+
+class SharedFeedbackItemOut(BaseModel):
+    criterion: str
+    observation: str
+    rationale: str
+    repair: str
+
+
+class SharedAttemptOut(BaseModel):
+    session_id: str
+    scenario: str
+    created_at: datetime
+    # Each of these is None when the link's corresponding permission is off —
+    # not omitted, so a coach/manager viewer can see plainly what wasn't shared.
+    wpm_overall: float | None = None
+    filler_rate_per_100_words: float | None = None
+    hedging_rate_per_100_words: float | None = None
+    point_position_score: float | None = None
+    transcript_text: str | None = None
+    feedback_items: list[SharedFeedbackItemOut] | None = None
+
+
+class SharedViewOut(BaseModel):
+    label: str | None
+    can_view_progress: bool
+    can_view_transcripts: bool
+    can_view_feedback: bool
+    attempts: list[SharedAttemptOut]

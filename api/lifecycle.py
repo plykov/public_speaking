@@ -23,6 +23,7 @@ from api.db import (
     PracticeSession,
     PushSubscription,
     Reminder,
+    ShareLink,
     SlideDeck,
     SlideTransition,
     Subscription,
@@ -74,6 +75,7 @@ def delete_user_data(db: OrmSession, store: ObjectStore, user_id: str) -> None:
         delete_session_data(db, store, session_id)
     db.query(L1Profile).filter_by(user_id=user_id).delete()
     db.query(Reminder).filter_by(user_id=user_id).delete()
+    db.query(ShareLink).filter_by(user_id=user_id).delete()
     db.query(PushSubscription).filter_by(user_id=user_id).delete()
     db.query(CheckoutSession).filter_by(user_id=user_id).delete()
     db.query(Subscription).filter_by(user_id=user_id).delete()

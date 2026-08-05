@@ -8,6 +8,7 @@ import { clearStoredUserId, getStoredUserId } from "@/lib/localUser";
 import { ReminderSettings } from "@/components/ReminderSettings";
 import { BillingSettings } from "@/components/BillingSettings";
 import { PushSettings } from "@/components/PushSettings";
+import { ShareLinkSettings } from "@/components/ShareLinkSettings";
 
 export default function Settings() {
   const router = useRouter();
@@ -96,6 +97,8 @@ export default function Settings() {
       <ReminderSettings userId={userId} />
 
       <PushSettings userId={userId} />
+
+      <ShareLinkSettings userId={userId} />
 
       <div className="card stack">
         <div className="pill">Export your data</div>

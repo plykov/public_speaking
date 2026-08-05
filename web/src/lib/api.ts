@@ -300,6 +300,84 @@ export async function deleteAccount(userId: string): Promise<void> {
   await fetch(`${API_BASE}/users/${userId}`, { method: "DELETE" });
 }
 
+export interface ShareLinkOut {
+  id: string;
+  token: string;
+  label: string | null;
+  can_view_progress: boolean;
+  can_view_transcripts: boolean;
+  can_view_feedback: boolean;
+  created_at: string;
+  expires_at: string | null;
+  revoked: boolean;
+}
+
+export interface SharedFeedbackItemOut {
+  criterion: string;
+  observation: string;
+  rationale: string;
+  repair: string;
+}
+
+export interface SharedAttemptOut {
+  session_id: string;
+  scenario: string;
+  created_at: string;
+  wpm_overall: number | null;
+  filler_rate_per_100_words: number | null;
+  hedging_rate_per_100_words: number | null;
+  point_position_score: number | null;
+  transcript_text: string | null;
+  feedback_items: SharedFeedbackItemOut[] | null;
+}
+
+export interface SharedViewOut {
+  label: string | null;
+  can_view_progress: boolean;
+  can_view_transcripts: boolean;
+  can_view_feedback: boolean;
+  attempts: SharedAttemptOut[];
+}
+
+/** §4.2 — private coach/manager share links, granular permissions. */
+export async function createShareLink(
+  userId: string,
+  options: {
+    label?: string;
+    canViewProgress?: boolean;
+    canViewTranscripts?: boolean;
+    canViewFeedback?: boolean;
+    expiresInDays?: number;
+  },
+): Promise<ShareLinkOut> {
+  const res = await fetch(`${API_BASE}/users/${userId}/share-links`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      label: options.label ?? null,
+      can_view_progress: options.canViewProgress ?? true,
+      can_view_transcripts: options.canViewTranscripts ?? false,
+      can_view_feedback: options.canViewFeedback ?? false,
+      expires_in_days: options.expiresInDays ?? null,
+    }),
+  });
+  return asJson<ShareLinkOut>(res);
+}
+
+export async function listShareLinks(userId: string): Promise<ShareLinkOut[]> {
+  const res = await fetch(`${API_BASE}/users/${userId}/share-links`);
+  return asJson<ShareLinkOut[]>(res);
+}
+
+export async function revokeShareLink(userId: string, shareId: string): Promise<void> {
+  await fetch(`${API_BASE}/users/${userId}/share-links/${shareId}`, { method: "DELETE" });
+}
+
+export async function fetchSharedView(token: string): Promise<SharedViewOut> {
+  const res = await fetch(`${API_BASE}/share/${token}`);
+  return asJson<SharedViewOut>(res);
+}
+
 /** §4.1 M10: store a reminder window. Storing the preference only — no
  * calendar integration or delivery infra exists to act on it yet. */
 export async function upsertReminder(
