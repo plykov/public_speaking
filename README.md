@@ -126,16 +126,63 @@ pipeline run without a real STT vendor; point `STT_PROVIDER` /
   sentence rather than guessing — guessing would make point-position
   scoring non-deterministic.
 
+## `web/` — Practice Studio (§4.1 M1/M2, §5 first-session flow)
+
+A real Next.js frontend, not fake data — it drives the actual FastAPI
+backend above.
+
+- **Mic capture is entirely real**: `getUserMedia` + `MediaRecorder`,
+  a live Web Audio level meter, countdown, timer, restart, and local
+  playback (`src/lib/useAudioRecorder.ts`, `src/components/RecorderPanel.tsx`).
+- **Upload is entirely real**: recordings go through the same
+  offset-tracked, resumable chunked upload
+  (`src/lib/chunkedUpload.ts`) that hits `POST /sessions/{id}/media`
+  on the backend.
+- **Analysis uses a dev-mode stand-in**: no live STT vendor is wired
+  up yet (§6.2 — nothing here uses Whisper, but nothing here uses a
+  real vendor either). Since the backend's mock STT expects a JSON
+  word-list rather than decoded audio, the UI's dev-mode transcript
+  picker (`src/components/DevTranscriptPicker.tsx`,
+  `src/lib/sampleTranscripts.ts`) sends one of three scripted sample
+  transcripts through that same upload path so the scorecard, evidence
+  links, and drill recommendation are all exercising the real backend
+  end to end. The real recording still plays back locally regardless —
+  it's just not what gets analyzed yet. This is labelled in the UI,
+  not hidden, and is the one seam to remove once a real STT provider
+  is wired into `api/pipeline/stt.py`.
+- Flow implemented: context select → baseline recording → scorecard
+  (one strength, up to three evidence-linked priorities, one drill) →
+  retry the drill → before/after delta (`src/app/practice/page.tsx`).
+
+### Running
+
+```bash
+# terminal 1 — backend
+pip install -e ".[dev]"
+CORS_ALLOW_ORIGINS=http://localhost:3000 uvicorn api.main:app --reload
+
+# terminal 2 — frontend
+cd web
+cp env.example .env.local   # NEXT_PUBLIC_API_URL, defaults to localhost:8000
+npm install
+npm run dev
+# → http://localhost:3000/practice
+```
+
 ## What's still out of scope
 
-Auth, the Next.js Practice Studio UI, Stripe billing, real STT/LLM
-vendor integrations, the fully normalized §6.4 schema, calendar
-integration, and everything in Phase 2/3 of the roadmap.
+Auth, Stripe billing, a real STT/LLM vendor integration, the fully
+normalized §6.4 schema, calendar integration, and everything in
+Phase 2/3 of the roadmap.
 
 ## Testing
 
 ```bash
+# metrics + API
 pytest --cov=metrics --cov=api --cov-report=term-missing
+
+# frontend
+cd web && npx tsc --noEmit && npm run lint && npm run build
 ```
 
 67 tests, 97% line coverage as of this commit.
