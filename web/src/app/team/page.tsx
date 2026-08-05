@@ -9,11 +9,13 @@ import {
   deleteTeamRubric,
   deleteTeamScenario,
   getTeam,
+  getTeamAnalytics,
   listTeamRubrics,
   listTeamScenarios,
   listTeamsForUser,
   removeTeamMember,
   updateMemberRole,
+  type TeamAnalyticsOut,
   type TeamOut,
   type TeamRubricOut,
   type TeamScenarioOut,
@@ -32,6 +34,7 @@ export default function TeamPage() {
   const [selected, setSelected] = useState<TeamWithMembersOut | null>(null);
   const [scenarios, setScenarios] = useState<TeamScenarioOut[]>([]);
   const [rubrics, setRubrics] = useState<TeamRubricOut[]>([]);
+  const [analytics, setAnalytics] = useState<TeamAnalyticsOut | null>(null);
   const [newTeamName, setNewTeamName] = useState("");
   const [scenarioTitle, setScenarioTitle] = useState("");
   const [scenarioPrompt, setScenarioPrompt] = useState("");
@@ -55,14 +58,16 @@ export default function TeamPage() {
   }, [userId]);
 
   async function refreshTeam(teamId: string) {
-    const [team, teamScenarios, teamRubrics] = await Promise.all([
+    const [team, teamScenarios, teamRubrics, teamAnalytics] = await Promise.all([
       getTeam(teamId),
       listTeamScenarios(teamId),
       listTeamRubrics(teamId),
+      getTeamAnalytics(teamId),
     ]);
     setSelected(team);
     setScenarios(teamScenarios);
     setRubrics(teamRubrics);
+    setAnalytics(teamAnalytics);
   }
 
   async function handleCreateTeam() {
@@ -202,6 +207,43 @@ export default function TeamPage() {
             </button>
             {inviteLink && <p style={{ wordBreak: "break-all" }}>{inviteLink}</p>}
           </div>
+
+          {analytics && (
+            <div className="card stack">
+              <div className="pill">Manager analytics (§4.3)</div>
+              <p style={{ color: "var(--muted)", fontSize: "0.85rem" }}>
+                Aggregate numbers only — recording access is off by default, absolutely: nothing
+                here can ever be a transcript, feedback text, or audio.
+              </p>
+              <div className="metric-grid">
+                <div className="metric-tile">
+                  <div className="label">Team attempts</div>
+                  <div className="value">{analytics.total_attempts}</div>
+                </div>
+                <div className="metric-tile">
+                  <div className="label">Avg words/min</div>
+                  <div className="value">{analytics.avg_wpm ?? "—"}</div>
+                </div>
+                <div className="metric-tile">
+                  <div className="label">Avg fillers/100w</div>
+                  <div className="value">{analytics.avg_filler_rate ?? "—"}</div>
+                </div>
+                <div className="metric-tile">
+                  <div className="label">Avg hedging/100w</div>
+                  <div className="value">{analytics.avg_hedging_rate ?? "—"}</div>
+                </div>
+              </div>
+              <div className="stack">
+                {analytics.per_member.map((m) => (
+                  <div key={m.user_id} className="row" style={{ alignItems: "center", gap: 8 }}>
+                    <span style={{ fontFamily: "monospace", fontSize: "0.8rem" }}>{m.user_id}</span>
+                    <span className="pill">{m.attempt_count} attempts</span>
+                    {m.avg_wpm !== null && <span className="pill">{m.avg_wpm} wpm avg</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="card stack">
             <div className="pill">Custom scenarios</div>

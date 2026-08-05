@@ -679,3 +679,28 @@ export async function listTeamRubrics(teamId: string): Promise<TeamRubricOut[]> 
 export async function deleteTeamRubric(teamId: string, rubricId: string): Promise<void> {
   await fetch(`${API_BASE}/teams/${teamId}/rubrics/${rubricId}`, { method: "DELETE" });
 }
+
+export interface MemberAnalyticsOut {
+  user_id: string;
+  attempt_count: number;
+  avg_wpm: number | null;
+  avg_filler_rate: number | null;
+  avg_hedging_rate: number | null;
+  avg_point_position_score: number | null;
+}
+
+export interface TeamAnalyticsOut {
+  member_count: number;
+  total_attempts: number;
+  avg_wpm: number | null;
+  avg_filler_rate: number | null;
+  avg_hedging_rate: number | null;
+  avg_point_position_score: number | null;
+  per_member: MemberAnalyticsOut[];
+}
+
+/** §4.3 manager aggregate analytics — numbers only, recording access off by default (absolute, not a toggle). */
+export async function getTeamAnalytics(teamId: string): Promise<TeamAnalyticsOut> {
+  const res = await fetch(`${API_BASE}/teams/${teamId}/analytics`);
+  return asJson<TeamAnalyticsOut>(res);
+}

@@ -474,3 +474,26 @@ class TeamRubricOut(BaseModel):
     name: str
     criteria: list[str]
     created_at: datetime
+
+
+class MemberAnalyticsOut(BaseModel):
+    """§4.3 manager aggregate analytics — numbers only. No field here can
+    carry a recording, transcript, or feedback text; that's a property of
+    the schema, not a permission check."""
+
+    user_id: str
+    attempt_count: int
+    avg_wpm: float | None
+    avg_filler_rate: float | None
+    avg_hedging_rate: float | None
+    avg_point_position_score: float | None
+
+
+class TeamAnalyticsOut(BaseModel):
+    member_count: int
+    total_attempts: int
+    avg_wpm: float | None
+    avg_filler_rate: float | None
+    avg_hedging_rate: float | None
+    avg_point_position_score: float | None
+    per_member: list[MemberAnalyticsOut]

@@ -1,8 +1,24 @@
 from __future__ import annotations
 
+from tests.api.conftest import mock_transcript_bytes
+
 
 def _user(client) -> str:
     return client.post("/users").json()["id"]
+
+
+def _analyze(client, user_id: str) -> str:
+    session_id = client.post("/sessions", json={"scenario": "standup", "user_id": user_id}).json()["id"]
+    audio = mock_transcript_bytes(
+        [
+            {"text": "we", "start_ms": 0, "end_ms": 200, "confidence": 0.95},
+            {"text": "should", "start_ms": 210, "end_ms": 400, "confidence": 0.95},
+            {"text": "ship", "start_ms": 410, "end_ms": 600, "confidence": 0.95},
+            {"text": "it.", "start_ms": 610, "end_ms": 800, "confidence": 0.95},
+        ]
+    )
+    client.post(f"/sessions/{session_id}/media?offset=0", content=audio)
+    return client.post(f"/sessions/{session_id}/analyze").json()["session_id"]
 
 
 def test_create_team_adds_admin_membership(client) -> None:
@@ -248,4 +264,59 @@ def test_delete_team_rubric(client) -> None:
 def test_delete_unknown_rubric_404(client) -> None:
     team_id, _ = _team(client)
     resp = client.delete(f"/teams/{team_id}/rubrics/does-not-exist")
+    assert resp.status_code == 404
+
+
+def test_team_analytics_empty_team(client) -> None:
+    team_id, admin_id = _team(client)
+    resp = client.get(f"/teams/{team_id}/analytics")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["member_count"] == 1
+    assert body["total_attempts"] == 0
+    assert body["avg_wpm"] is None
+    assert body["per_member"][0]["user_id"] == admin_id
+    assert body["per_member"][0]["attempt_count"] == 0
+
+
+def test_team_analytics_aggregates_member_attempts(client) -> None:
+    team_id, admin_id = _team(client)
+    member_id = _user(client)
+    invite = client.post(f"/teams/{team_id}/invites", json={"role": "member"}).json()
+    client.post(f"/team-invites/{invite['token']}/accept", json={"user_id": member_id})
+
+    _analyze(client, admin_id)
+    _analyze(client, member_id)
+
+    resp = client.get(f"/teams/{team_id}/analytics")
+    body = resp.json()
+    assert body["member_count"] == 2
+    assert body["total_attempts"] == 2
+    assert body["avg_wpm"] > 0
+    per_member_counts = {m["user_id"]: m["attempt_count"] for m in body["per_member"]}
+    assert per_member_counts == {admin_id: 1, member_id: 1}
+
+
+def test_team_analytics_excludes_non_member_sessions(client) -> None:
+    team_id, admin_id = _team(client)
+    outsider_id = _user(client)
+    _analyze(client, outsider_id)
+
+    resp = client.get(f"/teams/{team_id}/analytics")
+    body = resp.json()
+    assert body["total_attempts"] == 0
+
+
+def test_team_analytics_never_includes_raw_content_fields(client) -> None:
+    team_id, admin_id = _team(client)
+    _analyze(client, admin_id)
+    resp = client.get(f"/teams/{team_id}/analytics")
+    body = resp.json()
+    dumped = str(body)
+    for forbidden in ("transcript", "feedback_items", "audio", "media"):
+        assert forbidden not in dumped
+
+
+def test_team_analytics_unknown_team_404(client) -> None:
+    resp = client.get("/teams/does-not-exist/analytics")
     assert resp.status_code == 404

@@ -17,13 +17,26 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session as OrmSession
 
-from api.db import Team, TeamInvite, TeamMembership, TeamRubric, TeamScenario, User, get_db
+from api.analytics import AttemptMetrics, compute_team_analytics
+from api.db import (
+    AnalysisResult,
+    PracticeSession,
+    Team,
+    TeamInvite,
+    TeamMembership,
+    TeamRubric,
+    TeamScenario,
+    User,
+    get_db,
+)
 from api.schemas import (
     AcceptInviteRequest,
     CreateTeamInviteRequest,
     CreateTeamRequest,
     CreateTeamRubricRequest,
     CreateTeamScenarioRequest,
+    MemberAnalyticsOut,
+    TeamAnalyticsOut,
     TeamInviteOut,
     TeamMemberOut,
     TeamOut,
@@ -206,3 +219,57 @@ def delete_team_rubric(team_id: str, rubric_id: str, db: OrmSession = Depends(ge
         raise HTTPException(status_code=404, detail="rubric not found")
     db.delete(rubric)
     db.commit()
+
+
+@router.get("/teams/{team_id}/analytics", response_model=TeamAnalyticsOut)
+def get_team_analytics(team_id: str, db: OrmSession = Depends(get_db)) -> TeamAnalyticsOut:
+    """§4.3 manager aggregate analytics — recording access off by default.
+
+    "Off by default" is absolute here, not a toggle defaulted to off:
+    nothing in this response can ever be a recording, transcript, or
+    feedback item — see `api.analytics`'s docstring for why that's a
+    schema-level guarantee, not a permission check that could be
+    misconfigured.
+    """
+    _get_team_or_404(team_id, db)
+    member_ids = [m.user_id for m in db.query(TeamMembership).filter_by(team_id=team_id).all()]
+
+    rows = (
+        db.query(PracticeSession, AnalysisResult)
+        .join(AnalysisResult, AnalysisResult.session_id == PracticeSession.id)
+        .filter(PracticeSession.user_id.in_(member_ids))
+        .all()
+        if member_ids
+        else []
+    )
+    attempts = [
+        AttemptMetrics(
+            user_id=session.user_id,
+            wpm_overall=analysis.metrics_summary.get("wpm_overall"),
+            filler_rate_per_100_words=analysis.metrics_summary.get("filler_rate_per_100_words"),
+            hedging_rate_per_100_words=analysis.metrics_summary.get("hedging_rate_per_100_words"),
+            point_position_score=(analysis.metrics_summary.get("point_position") or {}).get("score"),
+        )
+        for session, analysis in rows
+    ]
+
+    result = compute_team_analytics(member_ids, attempts)
+    return TeamAnalyticsOut(
+        member_count=result.member_count,
+        total_attempts=result.total_attempts,
+        avg_wpm=result.avg_wpm,
+        avg_filler_rate=result.avg_filler_rate,
+        avg_hedging_rate=result.avg_hedging_rate,
+        avg_point_position_score=result.avg_point_position_score,
+        per_member=[
+            MemberAnalyticsOut(
+                user_id=m.user_id,
+                attempt_count=m.attempt_count,
+                avg_wpm=m.avg_wpm,
+                avg_filler_rate=m.avg_filler_rate,
+                avg_hedging_rate=m.avg_hedging_rate,
+                avg_point_position_score=m.avg_point_position_score,
+            )
+            for m in result.per_member
+        ],
+    )
