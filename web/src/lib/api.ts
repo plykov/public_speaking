@@ -747,3 +747,44 @@ export async function getTeamAuditLog(teamId: string): Promise<AuditLogEntryOut[
   const res = await fetch(`${API_BASE}/teams/${teamId}/audit-log`);
   return asJson<AuditLogEntryOut[]>(res);
 }
+
+export interface MeetingRecordingOut {
+  id: string;
+  title: string;
+  platform: string;
+  occurred_at: string;
+}
+
+export interface ConsentedImportOut {
+  id: string;
+  session_id: string;
+  user_id: string;
+  platform: string;
+  external_recording_id: string;
+  title: string;
+  consented_at: string;
+}
+
+/** §4.3 consented meeting-recording analysis. Real end-to-end except the
+ * vendor fetch itself — see api/meeting_import.py. */
+export async function listMeetingRecordings(userId: string): Promise<MeetingRecordingOut[]> {
+  const res = await fetch(`${API_BASE}/meeting-recordings?user_id=${userId}`);
+  return asJson<MeetingRecordingOut[]>(res);
+}
+
+export async function importMeetingRecording(
+  recordingId: string,
+  userId: string,
+): Promise<AnalysisResultOut> {
+  const res = await fetch(`${API_BASE}/meeting-recordings/${recordingId}/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user_id: userId, consent: true }),
+  });
+  return asJson<AnalysisResultOut>(res);
+}
+
+export async function listMeetingImports(userId: string): Promise<ConsentedImportOut[]> {
+  const res = await fetch(`${API_BASE}/users/${userId}/meeting-imports`);
+  return asJson<ConsentedImportOut[]>(res);
+}

@@ -679,6 +679,53 @@ created a team, practiced one session, and confirmed the dashboard
 reflected the real computed metrics (300 wpm, 1 attempt) rather than
 placeholder data.
 
+### Consented meeting-recording analysis (§4.3)
+
+Import an already-finished Zoom/Teams/Google Meet recording and run it
+through the exact same analysis pipeline as a live practice attempt.
+Everything is real except the one leg that needs a live vendor
+credential:
+
+- **What's mocked**: fetching recording bytes from Zoom/Teams/Meet cloud
+  storage — that needs a real OAuth app registration with each platform
+  (client id/secret, cloud-recording scope approval), the same category
+  of gap as Stripe, calendar, or SSO. `MeetingRecordingProvider`
+  (`api/meeting_import.py`) is the seam a real integration implements;
+  `MockMeetingRecordingProvider` returns a deterministic catalog of two
+  synthetic past meetings and, when "fetched," the same JSON word-list
+  payload `MockSTTProvider` already expects.
+- **What's real**: everything downstream of the fetch.
+  `POST /meeting-recordings/{id}/import` reuses `_persist_scoring` and
+  `_build_result_out` from `api.routers.sessions` — the identical
+  functions the ordinary `/analyze` endpoint uses — so an imported
+  attempt runs through the real STT → deterministic metrics → LLM rubric
+  → evidence-validation pipeline and lands in the normal
+  `PracticeSession`/`AnalysisResult` tables, indistinguishable from a
+  live-recorded attempt everywhere else in the app (Progress, share
+  links, team analytics). A `ConsentedRecordingImport` row records only
+  that an import happened, from which platform, and that consent was
+  given — consent is enforced server-side (`consent: true` is required
+  or the request 422s) before any recording fetch is attempted.
+- **Never live interception, structurally**: `list_available_recordings`
+  only returns recordings whose `occurred_at` is already in the past, and
+  nothing in `api/meeting_import.py` has a "join meeting" or streaming
+  code path at all — this can only ever import a one-shot copy of an
+  already-finished, already-recorded meeting the user explicitly chooses.
+
+| Endpoint | Behavior |
+|---|---|
+| `GET /meeting-recordings?user_id=` | List the mock catalog available to import |
+| `POST /meeting-recordings/{id}/import` | Fetch, transcribe, score, and persist as a normal attempt (`consent: true` required, else 422) |
+| `GET /users/{id}/meeting-imports` | List a user's past imports |
+
+**Frontend**: `/meeting-import` lists available recordings, imports one
+with a click, and renders the result through the same `Scorecard`
+component `/practice` uses. Verified live end to end via a scripted
+Chromium session: onboarded a user, imported the mock "Team Standup"
+recording, and confirmed the real Scorecard rendered (hedging feedback
+on the word "maybe" from the canned mock transcript, a computed 300 wpm)
+and the import then appeared under "Past imports."
+
 ## `web/` — Practice Studio (§4.1 M1/M2, §5 first-session flow)
 
 A real Next.js frontend, not fake data — it drives the actual FastAPI

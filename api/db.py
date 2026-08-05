@@ -473,6 +473,24 @@ class AuditLogEntry(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class ConsentedRecordingImport(Base):
+    """§4.3 — one consented post-meeting import from Zoom/Teams/Meet. The
+    resulting analysis lives in the normal `PracticeSession`/`AnalysisResult`
+    tables like any other attempt; this row exists only to record *that*
+    an import happened, from which platform, and that consent was given
+    (`consented_at` is set at request time, before any recording fetch)."""
+
+    __tablename__ = "consented_recording_imports"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"), unique=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    platform: Mapped[str] = mapped_column(String)
+    external_recording_id: Mapped[str] = mapped_column(String)
+    title: Mapped[str] = mapped_column(String)
+    consented_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 _engine = create_engine(
     settings.database_url,
     connect_args={"check_same_thread": False} if settings.database_url.startswith("sqlite") else {},
