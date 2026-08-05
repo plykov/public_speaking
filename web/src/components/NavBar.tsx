@@ -4,6 +4,7 @@ const LINKS = [
   { href: "/", label: "Home" },
   { href: "/practice", label: "Practice" },
   { href: "/progress", label: "Progress" },
+  { href: "/meeting-import", label: "Meeting import" },
   { href: "/settings", label: "Settings" },
 ];
 

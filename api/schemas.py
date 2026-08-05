@@ -519,6 +519,37 @@ class RetentionSettingOut(BaseModel):
     effective_retention_days: int
 
 
+class MeetingRecordingOut(BaseModel):
+    id: str
+    title: str
+    platform: str
+    occurred_at: datetime
+
+
+class ImportMeetingRecordingRequest(BaseModel):
+    user_id: str
+    consent: bool = False
+
+    @field_validator("consent")
+    @classmethod
+    def _consent_required(cls, value: bool) -> bool:
+        if not value:
+            raise ValueError("consent must be true — recordings are never imported without it")
+        return value
+
+
+class ConsentedImportOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    session_id: str
+    user_id: str
+    platform: str
+    external_recording_id: str
+    title: str
+    consented_at: datetime
+
+
 class SSOLoginUrlOut(BaseModel):
     authorization_url: str
 

@@ -12,6 +12,7 @@ from api.db import init_db
 from api.routers.admin import router as admin_router
 from api.routers.billing import router as billing_router
 from api.routers.feedback import router as feedback_router
+from api.routers.meeting_import import router as meeting_import_router
 from api.routers.push import router as push_router
 from api.routers.calendar import router as calendar_router
 from api.routers.roleplay import persona_router as roleplay_persona_router
@@ -57,6 +58,7 @@ app.include_router(scim_router)
 app.include_router(roleplay_router)
 app.include_router(roleplay_persona_router)
 app.include_router(calendar_router)
+app.include_router(meeting_import_router)
 
 
 @app.get("/health")
