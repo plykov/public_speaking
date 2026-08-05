@@ -66,6 +66,20 @@ export interface TranscriptWordOut {
   confidence: number;
 }
 
+export interface ReminderOut {
+  id: string;
+  user_id: string;
+  days: string[];
+  time_of_day: string;
+}
+
+export interface StreakOut {
+  current_streak: number;
+  longest_streak: number;
+  freeze_used_in_current_streak: boolean;
+  last_practice_date: string | null;
+}
+
 export interface AttemptSummaryOut {
   session_id: string;
   parent_session_id: string | null;
@@ -205,4 +219,31 @@ export async function exportUserData(userId: string): Promise<Record<string, unk
 /** Account delete (§4.1 M11, §6.5) — every session's media/rows, the L1 profile, and the user row. */
 export async function deleteAccount(userId: string): Promise<void> {
   await fetch(`${API_BASE}/users/${userId}`, { method: "DELETE" });
+}
+
+/** §4.1 M10: store a reminder window. Storing the preference only — no
+ * calendar integration or delivery infra exists to act on it yet. */
+export async function upsertReminder(
+  userId: string,
+  days: string[],
+  timeOfDay: string,
+): Promise<ReminderOut> {
+  const res = await fetch(`${API_BASE}/users/${userId}/reminder`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ days, time_of_day: timeOfDay }),
+  });
+  return asJson<ReminderOut>(res);
+}
+
+export async function getReminder(userId: string): Promise<ReminderOut | null> {
+  const res = await fetch(`${API_BASE}/users/${userId}/reminder`);
+  if (res.status === 404) return null;
+  return asJson<ReminderOut>(res);
+}
+
+/** §4.1 M10: non-punitive streak, self-relative — see api/streaks.py. */
+export async function getStreak(userId: string): Promise<StreakOut> {
+  const res = await fetch(`${API_BASE}/users/${userId}/streak`);
+  return asJson<StreakOut>(res);
 }

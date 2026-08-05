@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
+
+_VALID_DAYS = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
+_TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 
 
 class UserOut(BaseModel):
@@ -101,6 +105,48 @@ class UpdateTranscriptRequest(BaseModel):
     transcript — timestamps are never user-editable, only what was said."""
 
     words: list[str]
+
+
+class UpsertReminderRequest(BaseModel):
+    """§4.1 M10: calendar-free reminder window preference."""
+
+    days: list[str]  # subset of mon/tue/wed/thu/fri/sat/sun
+    time_of_day: str  # "HH:MM", 24h
+
+    @field_validator("days")
+    @classmethod
+    def _validate_days(cls, value: list[str]) -> list[str]:
+        invalid = set(value) - _VALID_DAYS
+        if invalid:
+            raise ValueError(f"invalid day(s): {sorted(invalid)}")
+        if not value:
+            raise ValueError("days must not be empty")
+        return value
+
+    @field_validator("time_of_day")
+    @classmethod
+    def _validate_time(cls, value: str) -> str:
+        if not _TIME_RE.match(value):
+            raise ValueError('time_of_day must be "HH:MM" in 24h format')
+        return value
+
+
+class ReminderOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    user_id: str
+    days: list[str]
+    time_of_day: str
+
+
+class StreakOut(BaseModel):
+    """§4.1 M10: non-punitive streak, self-relative — see api/streaks.py."""
+
+    current_streak: int
+    longest_streak: int
+    freeze_used_in_current_streak: bool
+    last_practice_date: str | None
 
 
 class AttemptSummaryOut(BaseModel):

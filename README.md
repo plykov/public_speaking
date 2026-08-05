@@ -75,10 +75,11 @@ upload (chunked, resumable) → normalize → STT → deterministic metrics
 | `api.pipeline.orchestrator` | §6.3 | `run_pipeline()` — the single function a worker (Celery/Arq in production) would call |
 | `api.db` | §6.4 | Normalized SQLAlchemy models — see the schema table below |
 | `api.routers.sessions` | — | HTTP surface: create session, chunked upload, analyze, fetch result, get/edit transcript (§4.1 M8), one-click delete (§4.1 M11) |
-| `api.routers.users` | §4.1 M1, M11 | Onboarding (create user, upsert L1 profile), plus account export and account delete |
+| `api.routers.users` | §4.1 M1, M9, M10, M11 | Onboarding (create user, upsert L1 profile), progress attempts, reminder + streak, account export and delete |
 | `api.routers.feedback` | §4.1 M6 | Thumbs up/down on a feedback item |
 | `api.routers.admin` | §6.5 | Raw-media retention purge (no scheduler in this environment — see below) |
 | `api.lifecycle` | §4.1 M11, §6.5 | Shared delete/export/retention logic — one code path for both session-delete and account-delete, so neither can drift and delete less than the other |
+| `api.streaks` | §4.1 M10 | `compute_streak()` — pure function, no DB access, same "pure core" pattern as `metrics/` |
 
 ### Data model (§6.4)
 
@@ -92,6 +93,7 @@ upload (chunked, resumable) → normalize → STT → deterministic metrics
 | `MetricEventRow` | `metric_event` | Every timestamped instance from the deterministic metrics module |
 | `FeedbackItemRow` | `feedback_item` | Includes `user_rating` (nullable bool) for the M6 thumbs up/down |
 | `TranscriptCorrection` | — | Not a §6.4 entity — logs each M8 word-level correction (original/corrected text) with a snapshot of the speaker's L1 background, an ASR-quality-by-cohort signal per §6.6. Deleted along with its session (privacy over long-term analytics — see below) |
+| `Reminder` | `reminder` | Days + time-of-day preference for the M10 habit layer. Storing the preference is the whole scope — see below |
 | `AnalysisResult` | — | Not a §6.4 entity — a per-attempt stamp of `rubric_version`/`model_version`, the computed metrics summary (kept as JSON: it's a derived aggregate, not a core entity), and a snapshot of the recommended drill |
 
 Re-analyzing a session (`POST /sessions/{id}/analyze` called again) replaces
@@ -102,10 +104,27 @@ attempt's worth of derived data, not a growing pile of them.
 **Deliberately not modeled**: `goal`, `scenario` as a table (kept as a
 plain string — no admin CRUD for scenarios was in scope),
 `rubric_version` as a table (the rubric is code-defined in
-`api/pipeline/llm.py`, not database-editable), `skill_trend` (§4.1 M9,
-Progress), `reminder` (§4.1 M10, Habit layer), `subscription` (§4.1
-M12, Billing) — none of those were part of the schema/onboarding work
-this covers.
+`api/pipeline/llm.py`, not database-editable), `skill_trend` (§4.1 M9 —
+`GET /users/{id}/attempts` computes trends from `AnalysisResult` on
+read rather than maintaining a separate rolled-up table), `subscription`
+(§4.1 M12, Billing) — none of those were part of the work this covers.
+
+### Habit layer (§4.1 M10)
+
+| Endpoint | Behavior |
+|---|---|
+| `PUT`/`GET /users/{id}/reminder` | Store/fetch a reminder-window preference (days + time-of-day) |
+| `GET /users/{id}/streak` | Non-punitive streak — a single missed day is tolerated once per streak run before it breaks, via `api.streaks.compute_streak()` |
+
+Calendar-free v1, same as the scope doc specifies: no Google/Microsoft
+calendar integration (that's Phase 2 — §4.2), and no actual reminder
+delivery, since there's no notification channel (push/email) or
+scheduler in this environment — same documented gap as
+`purge-expired-media` above. `PUT /users/{id}/reminder` stores the
+preference; a real send is a follow-up. The streak is self-relative,
+like Progress (§4.1 M9) — no comparison to other users, and "freeze"
+means exactly one skipped day per contiguous run doesn't reset the
+count, not an unlimited grace period.
 
 ### Privacy controls (§4.1 M11, §6.5)
 
@@ -247,6 +266,11 @@ backend above.
   and replaces the scorecard with freshly re-scored feedback — verified
   live that correcting a hedge word away from a recording drops the
   hedging-rate metric and removes the corresponding feedback item.
+- **Reminder + streak** (§4.1 M10): `src/components/ReminderSettings.tsx`
+  on `/settings` picks days + time and saves via `PUT /users/{id}/reminder`
+  — verified live that the choice persists across a page reload.
+  `src/components/StreakBadge.tsx` on `/progress` shows the current/
+  longest non-punitive streak from `GET /users/{id}/streak`.
 - A four-link nav bar (Home/Practice/Progress/Settings) ties the pages
   together (`src/components/NavBar.tsx`).
 
@@ -286,4 +310,4 @@ pytest --cov=metrics --cov=api --cov-report=term-missing
 cd web && npx tsc --noEmit && npm run lint && npm run build
 ```
 
-107 backend tests, 98% line coverage as of this commit.
+126 backend tests, 98% line coverage as of this commit.
