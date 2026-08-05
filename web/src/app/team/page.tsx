@@ -9,11 +9,18 @@ import {
   deleteTeamRubric,
   deleteTeamScenario,
   getTeam,
+  getTeamAnalytics,
+  getTeamAuditLog,
+  getTeamRetention,
   listTeamRubrics,
   listTeamScenarios,
   listTeamsForUser,
   removeTeamMember,
   updateMemberRole,
+  updateTeamRetention,
+  type AuditLogEntryOut,
+  type RetentionSettingOut,
+  type TeamAnalyticsOut,
   type TeamOut,
   type TeamRubricOut,
   type TeamScenarioOut,
@@ -32,6 +39,10 @@ export default function TeamPage() {
   const [selected, setSelected] = useState<TeamWithMembersOut | null>(null);
   const [scenarios, setScenarios] = useState<TeamScenarioOut[]>([]);
   const [rubrics, setRubrics] = useState<TeamRubricOut[]>([]);
+  const [analytics, setAnalytics] = useState<TeamAnalyticsOut | null>(null);
+  const [retention, setRetention] = useState<RetentionSettingOut | null>(null);
+  const [auditLog, setAuditLog] = useState<AuditLogEntryOut[]>([]);
+  const [retentionInput, setRetentionInput] = useState("");
   const [newTeamName, setNewTeamName] = useState("");
   const [scenarioTitle, setScenarioTitle] = useState("");
   const [scenarioPrompt, setScenarioPrompt] = useState("");
@@ -55,14 +66,40 @@ export default function TeamPage() {
   }, [userId]);
 
   async function refreshTeam(teamId: string) {
-    const [team, teamScenarios, teamRubrics] = await Promise.all([
-      getTeam(teamId),
-      listTeamScenarios(teamId),
-      listTeamRubrics(teamId),
-    ]);
+    const [team, teamScenarios, teamRubrics, teamAnalytics, teamRetention, teamAuditLog] =
+      await Promise.all([
+        getTeam(teamId),
+        listTeamScenarios(teamId),
+        listTeamRubrics(teamId),
+        getTeamAnalytics(teamId),
+        getTeamRetention(teamId),
+        getTeamAuditLog(teamId),
+      ]);
     setSelected(team);
     setScenarios(teamScenarios);
     setRubrics(teamRubrics);
+    setAnalytics(teamAnalytics);
+    setRetention(teamRetention);
+    setRetentionInput(teamRetention.retention_days?.toString() ?? "");
+    setAuditLog(teamAuditLog);
+  }
+
+  async function handleUpdateRetention() {
+    if (!selected) return;
+    const trimmed = retentionInput.trim();
+    const days = trimmed === "" ? null : Number(trimmed);
+    if (days !== null && (!Number.isInteger(days) || days <= 0)) {
+      setError("Retention days must be a positive whole number, or blank to use the default.");
+      return;
+    }
+    setError(null);
+    try {
+      const updated = await updateTeamRetention(selected.id, days, userId ?? undefined);
+      setRetention(updated);
+      setAuditLog(await getTeamAuditLog(selected.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "couldn't update retention");
+    }
   }
 
   async function handleCreateTeam() {
@@ -201,6 +238,91 @@ export default function TeamPage() {
               Generate invite link
             </button>
             {inviteLink && <p style={{ wordBreak: "break-all" }}>{inviteLink}</p>}
+          </div>
+
+          {analytics && (
+            <div className="card stack">
+              <div className="pill">Manager analytics (§4.3)</div>
+              <p style={{ color: "var(--muted)", fontSize: "0.85rem" }}>
+                Aggregate numbers only — recording access is off by default, absolutely: nothing
+                here can ever be a transcript, feedback text, or audio.
+              </p>
+              <div className="metric-grid">
+                <div className="metric-tile">
+                  <div className="label">Team attempts</div>
+                  <div className="value">{analytics.total_attempts}</div>
+                </div>
+                <div className="metric-tile">
+                  <div className="label">Avg words/min</div>
+                  <div className="value">{analytics.avg_wpm ?? "—"}</div>
+                </div>
+                <div className="metric-tile">
+                  <div className="label">Avg fillers/100w</div>
+                  <div className="value">{analytics.avg_filler_rate ?? "—"}</div>
+                </div>
+                <div className="metric-tile">
+                  <div className="label">Avg hedging/100w</div>
+                  <div className="value">{analytics.avg_hedging_rate ?? "—"}</div>
+                </div>
+              </div>
+              <div className="stack">
+                {analytics.per_member.map((m) => (
+                  <div key={m.user_id} className="row" style={{ alignItems: "center", gap: 8 }}>
+                    <span style={{ fontFamily: "monospace", fontSize: "0.8rem" }}>{m.user_id}</span>
+                    <span className="pill">{m.attempt_count} attempts</span>
+                    {m.avg_wpm !== null && <span className="pill">{m.avg_wpm} wpm avg</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="card stack">
+            <div className="pill">Retention (§4.3)</div>
+            <p style={{ color: "var(--muted)", fontSize: "0.85rem" }}>
+              Overrides the default 30-day raw-media retention window for this team. If a member
+              belongs to more than one team, the most restrictive setting applies.
+            </p>
+            <input
+              className="btn"
+              style={{ textAlign: "left", cursor: "text" }}
+              placeholder="Days (blank = use default)"
+              value={retentionInput}
+              onChange={(e) => setRetentionInput(e.target.value)}
+            />
+            <button className="btn btn-primary" onClick={handleUpdateRetention}>
+              Save retention setting
+            </button>
+            {retention && (
+              <p style={{ color: "var(--muted)", fontSize: "0.85rem" }}>
+                Currently effective: {retention.effective_retention_days} days
+                {retention.retention_days === null && " (default)"}
+              </p>
+            )}
+          </div>
+
+          <div className="card stack">
+            <div className="pill">Audit log (§4.3)</div>
+            <p style={{ color: "var(--muted)", fontSize: "0.85rem" }}>
+              Immutable record of sensitive team actions. Not shown: who&apos;s allowed to view
+              this — there&apos;s no auth system to gate it.
+            </p>
+            {auditLog.length === 0 && (
+              <p style={{ color: "var(--muted)" }}>No audit entries yet.</p>
+            )}
+            {auditLog.map((entry) => (
+              <div key={entry.id} className="row" style={{ alignItems: "center", gap: 8 }}>
+                <span className="pill">{entry.action}</span>
+                <span style={{ fontSize: "0.8rem", color: "var(--muted)" }}>
+                  {new Date(entry.created_at).toLocaleString()}
+                </span>
+                {entry.target_id && (
+                  <span style={{ fontFamily: "monospace", fontSize: "0.75rem" }}>
+                    {entry.target_type}:{entry.target_id}
+                  </span>
+                )}
+              </div>
+            ))}
           </div>
 
           <div className="card stack">

@@ -474,3 +474,76 @@ class TeamRubricOut(BaseModel):
     name: str
     criteria: list[str]
     created_at: datetime
+
+
+class MemberAnalyticsOut(BaseModel):
+    """§4.3 manager aggregate analytics — numbers only. No field here can
+    carry a recording, transcript, or feedback text; that's a property of
+    the schema, not a permission check."""
+
+    user_id: str
+    attempt_count: int
+    avg_wpm: float | None
+    avg_filler_rate: float | None
+    avg_hedging_rate: float | None
+    avg_point_position_score: float | None
+
+
+class TeamAnalyticsOut(BaseModel):
+    member_count: int
+    total_attempts: int
+    avg_wpm: float | None
+    avg_filler_rate: float | None
+    avg_hedging_rate: float | None
+    avg_point_position_score: float | None
+    per_member: list[MemberAnalyticsOut]
+
+
+class UpdateRetentionRequest(BaseModel):
+    """§4.3 configurable retention. `None` clears the override, reverting
+    to the global default (api.lifecycle.DEFAULT_RETENTION_DAYS)."""
+
+    retention_days: int | None = None
+
+    @field_validator("retention_days")
+    @classmethod
+    def _positive_or_none(cls, value: int | None) -> int | None:
+        if value is not None and value <= 0:
+            raise ValueError("retention_days must be positive")
+        return value
+
+
+class RetentionSettingOut(BaseModel):
+    team_id: str
+    retention_days: int | None  # None = using the global default
+    effective_retention_days: int
+
+
+class SSOLoginUrlOut(BaseModel):
+    authorization_url: str
+
+
+class SSOCallbackRequest(BaseModel):
+    code: str
+    redirect_uri: str = "https://app.example/sso/callback"
+
+
+class SSOCallbackResult(BaseModel):
+    user_id: str
+    team_id: str
+    role: str
+    created_user: bool
+    created_membership: bool
+
+
+class AuditLogEntryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    team_id: str | None
+    actor_user_id: str | None
+    action: str
+    target_type: str | None
+    target_id: str | None
+    detail: dict | None
+    created_at: datetime

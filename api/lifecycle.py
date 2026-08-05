@@ -30,6 +30,8 @@ from api.db import (
     SlideDeck,
     SlideTransition,
     Subscription,
+    Team,
+    TeamMembership,
     TranscriptCorrection,
     TranscriptWord,
     User,
@@ -163,22 +165,70 @@ def export_user_data(db: OrmSession, user: User) -> dict[str, Any]:
     }
 
 
+def effective_retention_days(db: OrmSession, user_id: str | None) -> int:
+    """§4.3 configurable retention: the retention window that applies to
+    this user's media, in days. A user can belong to multiple teams with
+    different settings — the **most restrictive** (minimum configured
+    value) wins, since retention is a privacy floor, not a ceiling a team
+    could opt out of by joining a more lenient one. Teams with no
+    override (`retention_days is None`), and users with no team at all,
+    fall back to `DEFAULT_RETENTION_DAYS`.
+    """
+    if user_id is None:
+        return DEFAULT_RETENTION_DAYS
+    team_ids = [m.team_id for m in db.query(TeamMembership).filter_by(user_id=user_id).all()]
+    if not team_ids:
+        return DEFAULT_RETENTION_DAYS
+    configured = [
+        t.retention_days
+        for t in db.query(Team).filter(Team.id.in_(team_ids)).all()
+        if t.retention_days is not None
+    ]
+    if not configured:
+        return DEFAULT_RETENTION_DAYS
+    return min(configured)
+
+
 def purge_expired_media(
     db: OrmSession,
     store: ObjectStore,
     retention_days: int = DEFAULT_RETENTION_DAYS,
     now: datetime | None = None,
 ) -> int:
-    """Delete raw media older than `retention_days`; derived metrics/feedback stay.
+    """Delete raw media older than the effective retention window; derived
+    metrics/feedback stay.
 
     §6.5: "Raw media auto-delete at 30 days unless user-pinned; derived
     metrics retained." No pinning UI exists yet, so this always purges —
     pinning is a follow-up, not implemented here. Intended to run on a
     schedule in production (§6.1); exposed as a callable + an admin
     endpoint since this environment has no cron/worker infra.
+
+    `retention_days` is the fallback for a session with no owning user
+    (anonymous practice) or no team; a session's own user/team retention
+    setting (§4.3) takes precedence when one applies — see
+    `effective_retention_days`.
     """
-    cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=retention_days)
-    expired = db.query(MediaAsset).filter(MediaAsset.created_at < cutoff).all()
+    now = now or datetime.now(timezone.utc)
+    candidates = (
+        db.query(MediaAsset, PracticeSession.user_id)
+        .outerjoin(PracticeSession, PracticeSession.id == MediaAsset.session_id)
+        .all()
+    )
+
+    expired = []
+    for asset, user_id in candidates:
+        days = effective_retention_days(db, user_id) if user_id else retention_days
+        cutoff = now - timedelta(days=days)
+        created_at = asset.created_at
+        # SQLite silently drops tzinfo on round-trip even for
+        # DateTime(timezone=True) columns (see api.billing._comparable).
+        if (created_at.tzinfo is None) != (cutoff.tzinfo is None):
+            created_at = created_at.replace(tzinfo=None)
+            cutoff = cutoff.replace(tzinfo=None)
+        if created_at < cutoff:
+            expired.append(asset)
+
     for asset in expired:
         store.delete(asset.storage_key)
         db.delete(asset)

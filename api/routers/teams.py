@@ -17,13 +17,35 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session as OrmSession
 
-from api.db import Team, TeamInvite, TeamMembership, TeamRubric, TeamScenario, User, get_db
+from api.analytics import AttemptMetrics, compute_team_analytics
+from api.audit import log_audit_event
+from api.deps import get_sso
+from api.db import (
+    AnalysisResult,
+    AuditLogEntry,
+    PracticeSession,
+    Team,
+    TeamInvite,
+    TeamMembership,
+    TeamRubric,
+    TeamScenario,
+    User,
+    get_db,
+)
+from api.lifecycle import DEFAULT_RETENTION_DAYS, effective_retention_days
 from api.schemas import (
     AcceptInviteRequest,
+    AuditLogEntryOut,
     CreateTeamInviteRequest,
     CreateTeamRequest,
     CreateTeamRubricRequest,
     CreateTeamScenarioRequest,
+    MemberAnalyticsOut,
+    RetentionSettingOut,
+    SSOCallbackRequest,
+    SSOCallbackResult,
+    SSOLoginUrlOut,
+    TeamAnalyticsOut,
     TeamInviteOut,
     TeamMemberOut,
     TeamOut,
@@ -31,8 +53,10 @@ from api.schemas import (
     TeamScenarioOut,
     TeamWithMembersOut,
     UpdateMemberRoleRequest,
+    UpdateRetentionRequest,
 )
 from api.sharing import generate_token
+from api.sso import SSOProvider
 
 router = APIRouter(tags=["teams"])
 
@@ -63,6 +87,15 @@ def create_team(body: CreateTeamRequest, db: OrmSession = Depends(get_db)) -> Te
     db.add(team)
     db.flush()
     db.add(TeamMembership(team_id=team.id, user_id=body.admin_user_id, role="admin"))
+    log_audit_event(
+        db,
+        team_id=team.id,
+        actor_user_id=body.admin_user_id,
+        action="team.create",
+        target_type="team",
+        target_id=team.id,
+        detail={"name": body.name},
+    )
     db.commit()
     db.refresh(team)
     return _team_with_members_out(db, team)
@@ -85,24 +118,50 @@ def list_teams_for_user(user_id: str, db: OrmSession = Depends(get_db)) -> list[
 
 
 @router.delete("/teams/{team_id}/members/{user_id}", status_code=204)
-def remove_team_member(team_id: str, user_id: str, db: OrmSession = Depends(get_db)) -> None:
+def remove_team_member(
+    team_id: str, user_id: str, acting_user_id: str | None = None, db: OrmSession = Depends(get_db)
+) -> None:
+    """`acting_user_id` is self-reported by the caller for the audit trail
+    only — there is no auth system to verify it (see module docstring)."""
     _get_team_or_404(team_id, db)
     membership = db.query(TeamMembership).filter_by(team_id=team_id, user_id=user_id).one_or_none()
     if membership is None:
         raise HTTPException(status_code=404, detail="this user is not a member of this team")
     db.delete(membership)
+    log_audit_event(
+        db,
+        team_id=team_id,
+        actor_user_id=acting_user_id,
+        action="team.member.remove",
+        target_type="user",
+        target_id=user_id,
+    )
     db.commit()
 
 
 @router.put("/teams/{team_id}/members/{user_id}/role", response_model=TeamMemberOut)
 def update_member_role(
-    team_id: str, user_id: str, body: UpdateMemberRoleRequest, db: OrmSession = Depends(get_db)
+    team_id: str,
+    user_id: str,
+    body: UpdateMemberRoleRequest,
+    acting_user_id: str | None = None,
+    db: OrmSession = Depends(get_db),
 ) -> TeamMemberOut:
     _get_team_or_404(team_id, db)
     membership = db.query(TeamMembership).filter_by(team_id=team_id, user_id=user_id).one_or_none()
     if membership is None:
         raise HTTPException(status_code=404, detail="this user is not a member of this team")
+    previous_role = membership.role
     membership.role = body.role
+    log_audit_event(
+        db,
+        team_id=team_id,
+        actor_user_id=acting_user_id,
+        action="team.member.role_change",
+        target_type="user",
+        target_id=user_id,
+        detail={"from": previous_role, "to": body.role},
+    )
     db.commit()
     return TeamMemberOut(user_id=membership.user_id, role=membership.role, joined_at=membership.joined_at)
 
@@ -114,6 +173,9 @@ def create_team_invite(
     _get_team_or_404(team_id, db)
     invite = TeamInvite(team_id=team_id, token=generate_token(), role=body.role)
     db.add(invite)
+    log_audit_event(
+        db, team_id=team_id, actor_user_id=None, action="team.invite.create", detail={"role": body.role}
+    )
     db.commit()
     return TeamInviteOut(token=invite.token, team_id=team_id, role=invite.role, accepted=False)
 
@@ -138,6 +200,14 @@ def accept_team_invite(
     db.add(membership)
     invite.accepted_at = datetime.now(timezone.utc)
     invite.accepted_by_user_id = body.user_id
+    log_audit_event(
+        db,
+        team_id=invite.team_id,
+        actor_user_id=body.user_id,
+        action="team.invite.accept",
+        target_type="user",
+        target_id=body.user_id,
+    )
     db.commit()
     return TeamMemberOut(user_id=membership.user_id, role=membership.role, joined_at=membership.joined_at)
 
@@ -152,6 +222,16 @@ def create_team_scenario(
     _get_team_or_404(team_id, db)
     scenario = TeamScenario(team_id=team_id, title=body.title, prompt=body.prompt)
     db.add(scenario)
+    db.flush()
+    log_audit_event(
+        db,
+        team_id=team_id,
+        actor_user_id=None,
+        action="team.scenario.create",
+        target_type="team_scenario",
+        target_id=scenario.id,
+        detail={"title": body.title},
+    )
     db.commit()
     db.refresh(scenario)
     return scenario
@@ -170,6 +250,14 @@ def delete_team_scenario(team_id: str, scenario_id: str, db: OrmSession = Depend
     if scenario is None:
         raise HTTPException(status_code=404, detail="scenario not found")
     db.delete(scenario)
+    log_audit_event(
+        db,
+        team_id=team_id,
+        actor_user_id=None,
+        action="team.scenario.delete",
+        target_type="team_scenario",
+        target_id=scenario_id,
+    )
     db.commit()
 
 
@@ -187,6 +275,16 @@ def create_team_rubric(
     _get_team_or_404(team_id, db)
     rubric = TeamRubric(team_id=team_id, name=body.name, criteria=body.criteria)
     db.add(rubric)
+    db.flush()
+    log_audit_event(
+        db,
+        team_id=team_id,
+        actor_user_id=None,
+        action="team.rubric.create",
+        target_type="team_rubric",
+        target_id=rubric.id,
+        detail={"name": body.name, "criteria": body.criteria},
+    )
     db.commit()
     db.refresh(rubric)
     return rubric
@@ -205,4 +303,181 @@ def delete_team_rubric(team_id: str, rubric_id: str, db: OrmSession = Depends(ge
     if rubric is None:
         raise HTTPException(status_code=404, detail="rubric not found")
     db.delete(rubric)
+    log_audit_event(
+        db,
+        team_id=team_id,
+        actor_user_id=None,
+        action="team.rubric.delete",
+        target_type="team_rubric",
+        target_id=rubric_id,
+    )
     db.commit()
+
+
+@router.get("/teams/{team_id}/analytics", response_model=TeamAnalyticsOut)
+def get_team_analytics(team_id: str, db: OrmSession = Depends(get_db)) -> TeamAnalyticsOut:
+    """§4.3 manager aggregate analytics — recording access off by default.
+
+    "Off by default" is absolute here, not a toggle defaulted to off:
+    nothing in this response can ever be a recording, transcript, or
+    feedback item — see `api.analytics`'s docstring for why that's a
+    schema-level guarantee, not a permission check that could be
+    misconfigured.
+    """
+    _get_team_or_404(team_id, db)
+    member_ids = [m.user_id for m in db.query(TeamMembership).filter_by(team_id=team_id).all()]
+
+    rows = (
+        db.query(PracticeSession, AnalysisResult)
+        .join(AnalysisResult, AnalysisResult.session_id == PracticeSession.id)
+        .filter(PracticeSession.user_id.in_(member_ids))
+        .all()
+        if member_ids
+        else []
+    )
+    attempts = [
+        AttemptMetrics(
+            user_id=session.user_id,
+            wpm_overall=analysis.metrics_summary.get("wpm_overall"),
+            filler_rate_per_100_words=analysis.metrics_summary.get("filler_rate_per_100_words"),
+            hedging_rate_per_100_words=analysis.metrics_summary.get("hedging_rate_per_100_words"),
+            point_position_score=(analysis.metrics_summary.get("point_position") or {}).get("score"),
+        )
+        for session, analysis in rows
+    ]
+
+    result = compute_team_analytics(member_ids, attempts)
+    return TeamAnalyticsOut(
+        member_count=result.member_count,
+        total_attempts=result.total_attempts,
+        avg_wpm=result.avg_wpm,
+        avg_filler_rate=result.avg_filler_rate,
+        avg_hedging_rate=result.avg_hedging_rate,
+        avg_point_position_score=result.avg_point_position_score,
+        per_member=[
+            MemberAnalyticsOut(
+                user_id=m.user_id,
+                attempt_count=m.attempt_count,
+                avg_wpm=m.avg_wpm,
+                avg_filler_rate=m.avg_filler_rate,
+                avg_hedging_rate=m.avg_hedging_rate,
+                avg_point_position_score=m.avg_point_position_score,
+            )
+            for m in result.per_member
+        ],
+    )
+
+
+@router.get("/teams/{team_id}/retention", response_model=RetentionSettingOut)
+def get_team_retention(team_id: str, db: OrmSession = Depends(get_db)) -> RetentionSettingOut:
+    team = _get_team_or_404(team_id, db)
+    return RetentionSettingOut(
+        team_id=team_id,
+        retention_days=team.retention_days,
+        effective_retention_days=team.retention_days or DEFAULT_RETENTION_DAYS,
+    )
+
+
+@router.put("/teams/{team_id}/retention", response_model=RetentionSettingOut)
+def update_team_retention(
+    team_id: str,
+    body: UpdateRetentionRequest,
+    acting_user_id: str | None = None,
+    db: OrmSession = Depends(get_db),
+) -> RetentionSettingOut:
+    """§4.3 configurable retention. Applies to any member's media via
+    `api.lifecycle.effective_retention_days` (most-restrictive-wins across
+    a user's teams) — see that function's docstring."""
+    team = _get_team_or_404(team_id, db)
+    previous = team.retention_days
+    team.retention_days = body.retention_days
+    log_audit_event(
+        db,
+        team_id=team_id,
+        actor_user_id=acting_user_id,
+        action="team.retention.update",
+        target_type="team",
+        target_id=team_id,
+        detail={"from": previous, "to": body.retention_days},
+    )
+    db.commit()
+    return RetentionSettingOut(
+        team_id=team_id,
+        retention_days=team.retention_days,
+        effective_retention_days=team.retention_days or DEFAULT_RETENTION_DAYS,
+    )
+
+
+@router.get("/teams/{team_id}/audit-log", response_model=list[AuditLogEntryOut])
+def get_team_audit_log(team_id: str, db: OrmSession = Depends(get_db)) -> list[AuditLogEntry]:
+    _get_team_or_404(team_id, db)
+    return (
+        db.query(AuditLogEntry)
+        .filter_by(team_id=team_id)
+        .order_by(AuditLogEntry.created_at.desc())
+        .all()
+    )
+
+
+@router.get("/teams/{team_id}/sso/login-url", response_model=SSOLoginUrlOut)
+def get_sso_login_url(
+    team_id: str,
+    redirect_uri: str = "https://app.example/sso/callback",
+    db: OrmSession = Depends(get_db),
+    sso: SSOProvider = Depends(get_sso),
+) -> SSOLoginUrlOut:
+    """§4.3 SSO — mocked (see api/sso.py): a real deployment redirects the
+    browser to this URL, which points at a real IdP's login page."""
+    _get_team_or_404(team_id, db)
+    return SSOLoginUrlOut(authorization_url=sso.build_authorization_url(team_id, redirect_uri))
+
+
+@router.post("/teams/{team_id}/sso/callback", response_model=SSOCallbackResult)
+def sso_callback(
+    team_id: str,
+    body: SSOCallbackRequest,
+    db: OrmSession = Depends(get_db),
+    sso: SSOProvider = Depends(get_sso),
+) -> SSOCallbackResult:
+    """Exchanges an IdP auth code for an identity, then find-or-creates a
+    `User` by `external_id` and ensures team membership — the genuinely
+    real part of SSO login (identity → membership provisioning), sitting
+    behind a mocked code exchange (see api/sso.py)."""
+    _get_team_or_404(team_id, db)
+    try:
+        identity = sso.exchange_code(body.code)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    user = db.query(User).filter_by(external_id=identity.external_id).one_or_none()
+    created_user = False
+    if user is None:
+        user = User(external_id=identity.external_id, email=identity.email)
+        db.add(user)
+        db.flush()
+        created_user = True
+
+    membership = db.query(TeamMembership).filter_by(team_id=team_id, user_id=user.id).one_or_none()
+    created_membership = False
+    if membership is None:
+        membership = TeamMembership(team_id=team_id, user_id=user.id, role="member")
+        db.add(membership)
+        created_membership = True
+
+    log_audit_event(
+        db,
+        team_id=team_id,
+        actor_user_id=user.id,
+        action="team.sso.login",
+        target_type="user",
+        target_id=user.id,
+        detail={"created_user": created_user, "created_membership": created_membership},
+    )
+    db.commit()
+    return SSOCallbackResult(
+        user_id=user.id,
+        team_id=team_id,
+        role=membership.role,
+        created_user=created_user,
+        created_membership=created_membership,
+    )

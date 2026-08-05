@@ -65,6 +65,12 @@ class User(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    # §4.3 SSO/SCIM: populated only when a user is provisioned via SCIM or
+    # linked via an SSO login — null for the ordinary anonymous flow.
+    # `external_id` is the IdP's stable identifier; unique so SCIM's
+    # find-or-create can look a user up by it.
+    external_id: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
+    email: Mapped[str | None] = mapped_column(String, nullable=True)
 
     l1_profile: Mapped["L1Profile | None"] = relationship(back_populates="user", uselist=False)
 
@@ -389,6 +395,9 @@ class Team(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String)
+    # §4.3 configurable retention — None means "use the global default"
+    # (api.lifecycle.DEFAULT_RETENTION_DAYS), not "retain forever."
+    retention_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
@@ -443,6 +452,24 @@ class TeamRubric(Base):
     team_id: Mapped[str] = mapped_column(ForeignKey("teams.id"))
     name: Mapped[str] = mapped_column(String)
     criteria: Mapped[list[str]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class AuditLogEntry(Base):
+    """§4.3 audit logs — an immutable record of a sensitive team/admin
+    action. Never updated or deleted by any other code path in this app
+    (not even account/team deletion cascades touch it) — an audit log
+    that could be edited after the fact isn't one."""
+
+    __tablename__ = "audit_log_entries"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    team_id: Mapped[str | None] = mapped_column(ForeignKey("teams.id"), nullable=True)
+    actor_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    action: Mapped[str] = mapped_column(String)
+    target_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    target_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 

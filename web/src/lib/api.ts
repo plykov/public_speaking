@@ -679,3 +679,71 @@ export async function listTeamRubrics(teamId: string): Promise<TeamRubricOut[]> 
 export async function deleteTeamRubric(teamId: string, rubricId: string): Promise<void> {
   await fetch(`${API_BASE}/teams/${teamId}/rubrics/${rubricId}`, { method: "DELETE" });
 }
+
+export interface MemberAnalyticsOut {
+  user_id: string;
+  attempt_count: number;
+  avg_wpm: number | null;
+  avg_filler_rate: number | null;
+  avg_hedging_rate: number | null;
+  avg_point_position_score: number | null;
+}
+
+export interface TeamAnalyticsOut {
+  member_count: number;
+  total_attempts: number;
+  avg_wpm: number | null;
+  avg_filler_rate: number | null;
+  avg_hedging_rate: number | null;
+  avg_point_position_score: number | null;
+  per_member: MemberAnalyticsOut[];
+}
+
+/** §4.3 manager aggregate analytics — numbers only, recording access off by default (absolute, not a toggle). */
+export async function getTeamAnalytics(teamId: string): Promise<TeamAnalyticsOut> {
+  const res = await fetch(`${API_BASE}/teams/${teamId}/analytics`);
+  return asJson<TeamAnalyticsOut>(res);
+}
+
+export interface RetentionSettingOut {
+  team_id: string;
+  retention_days: number | null;
+  effective_retention_days: number;
+}
+
+export interface AuditLogEntryOut {
+  id: string;
+  team_id: string | null;
+  actor_user_id: string | null;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  detail: Record<string, unknown> | null;
+  created_at: string;
+}
+
+/** §4.3 configurable retention. */
+export async function getTeamRetention(teamId: string): Promise<RetentionSettingOut> {
+  const res = await fetch(`${API_BASE}/teams/${teamId}/retention`);
+  return asJson<RetentionSettingOut>(res);
+}
+
+export async function updateTeamRetention(
+  teamId: string,
+  retentionDays: number | null,
+  actingUserId?: string,
+): Promise<RetentionSettingOut> {
+  const query = actingUserId ? `?acting_user_id=${actingUserId}` : "";
+  const res = await fetch(`${API_BASE}/teams/${teamId}/retention${query}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ retention_days: retentionDays }),
+  });
+  return asJson<RetentionSettingOut>(res);
+}
+
+/** §4.3 audit logs. */
+export async function getTeamAuditLog(teamId: string): Promise<AuditLogEntryOut[]> {
+  const res = await fetch(`${API_BASE}/teams/${teamId}/audit-log`);
+  return asJson<AuditLogEntryOut[]>(res);
+}
