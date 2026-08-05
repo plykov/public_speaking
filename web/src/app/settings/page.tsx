@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { deleteAccount, exportUserData } from "@/lib/api";
 import { clearStoredUserId, getStoredUserId } from "@/lib/localUser";
+import { ReminderSettings } from "@/components/ReminderSettings";
 
 export default function Settings() {
   const router = useRouter();
@@ -87,6 +88,8 @@ export default function Settings() {
           days; your derived metrics and feedback history stay so your progress is never lost.
         </p>
       </div>
+
+      <ReminderSettings userId={userId} />
 
       <div className="card stack">
         <div className="pill">Export your data</div>

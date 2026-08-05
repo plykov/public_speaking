@@ -88,6 +88,23 @@ class L1Profile(Base):
     user: Mapped[User] = relationship(back_populates="l1_profile")
 
 
+class Reminder(Base):
+    """§4.1 M10: user-set reminder window. Calendar-free v1 — no calendar
+    integration (Phase 2) and no email delivery here; storing the
+    preference is the whole scope of this table. Actually sending a
+    reminder needs the scheduler this environment doesn't have (§6.1),
+    same gap as `api.lifecycle.purge_expired_media`.
+    """
+
+    __tablename__ = "reminders"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), unique=True)
+    days: Mapped[list] = mapped_column(JSON)  # e.g. ["mon","wed","fri"]
+    time_of_day: Mapped[str] = mapped_column(String)  # "HH:MM", 24h, no timezone handling yet
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class PracticeSession(Base):
     __tablename__ = "sessions"
 

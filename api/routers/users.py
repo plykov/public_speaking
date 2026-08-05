@@ -8,16 +8,26 @@ api/pipeline/llm.py or metrics/report.py reads this table.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session as OrmSession
 
-from api.db import AnalysisResult, L1Profile, PracticeSession, User, get_db
+from api.db import AnalysisResult, L1Profile, PracticeSession, Reminder, User, get_db
 from api.deps import get_object_store
 from api.lifecycle import delete_user_data, export_user_data
-from api.schemas import AttemptSummaryOut, CreateL1ProfileRequest, L1ProfileOut, UserOut
+from api.schemas import (
+    AttemptSummaryOut,
+    CreateL1ProfileRequest,
+    L1ProfileOut,
+    ReminderOut,
+    StreakOut,
+    UpsertReminderRequest,
+    UserOut,
+)
 from api.storage import ObjectStore
+from api.streaks import compute_streak
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -128,3 +138,65 @@ def list_attempts(user_id: str, db: OrmSession = Depends(get_db)) -> list[Attemp
             )
         )
     return attempts
+
+
+@router.put("/{user_id}/reminder", response_model=ReminderOut)
+def upsert_reminder(
+    user_id: str, body: UpsertReminderRequest, db: OrmSession = Depends(get_db)
+) -> Reminder:
+    """§4.1 M10: store a reminder window preference.
+
+    Calendar-free v1 — no calendar integration (Phase 2), and no
+    scheduler/email delivery in this environment to actually send one
+    (same gap as `api.lifecycle.purge_expired_media`). This endpoint
+    stores the preference; acting on it is a follow-up.
+    """
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="user not found")
+
+    reminder = db.query(Reminder).filter_by(user_id=user_id).one_or_none()
+    if reminder is None:
+        reminder = Reminder(user_id=user_id, days=body.days, time_of_day=body.time_of_day)
+        db.add(reminder)
+    else:
+        reminder.days = body.days
+        reminder.time_of_day = body.time_of_day
+    db.commit()
+    db.refresh(reminder)
+    return reminder
+
+
+@router.get("/{user_id}/reminder", response_model=ReminderOut)
+def get_reminder(user_id: str, db: OrmSession = Depends(get_db)) -> Reminder:
+    reminder = db.query(Reminder).filter_by(user_id=user_id).one_or_none()
+    if reminder is None:
+        raise HTTPException(status_code=404, detail="no reminder set for this user yet")
+    return reminder
+
+
+@router.get("/{user_id}/streak", response_model=StreakOut)
+def get_streak(user_id: str, db: OrmSession = Depends(get_db)) -> StreakOut:
+    """§4.1 M10: non-punitive streak — one skipped day tolerated per run.
+    Self-relative, like Progress (§4.1 M9): no comparison to other users."""
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="user not found")
+
+    rows = (
+        db.query(AnalysisResult.created_at)
+        .join(PracticeSession, PracticeSession.id == AnalysisResult.session_id)
+        .filter(PracticeSession.user_id == user_id)
+        .all()
+    )
+    practice_dates = {r.created_at.date() for r in rows}
+    result = compute_streak(practice_dates, today=datetime.now(timezone.utc).date())
+
+    return StreakOut(
+        current_streak=result.current_streak,
+        longest_streak=result.longest_streak,
+        freeze_used_in_current_streak=result.freeze_used_in_current_streak,
+        last_practice_date=(
+            result.last_practice_date.isoformat() if result.last_practice_date else None
+        ),
+    )

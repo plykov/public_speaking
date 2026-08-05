@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { getAttempts, type AttemptSummaryOut } from "@/lib/api";
 import { getStoredUserId } from "@/lib/localUser";
+import { StreakBadge } from "@/components/StreakBadge";
 
 interface MetricConfig {
   key: keyof Pick<
@@ -56,6 +57,7 @@ function TrendRow({ attempts, metric }: { attempts: AttemptSummaryOut[]; metric:
 export default function Progress() {
   const [attempts, setAttempts] = useState<AttemptSummaryOut[] | null>(null);
   const [hasUser, setHasUser] = useState<boolean | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -64,6 +66,7 @@ export default function Progress() {
     const userId = getStoredUserId();
     Promise.resolve().then(async () => {
       setHasUser(userId !== null);
+      setUserId(userId);
       if (!userId) {
         setAttempts([]);
         return;
@@ -104,8 +107,9 @@ export default function Progress() {
         </div>
       )}
 
-      {attempts !== null && attempts.length > 0 && (
+      {attempts !== null && attempts.length > 0 && userId && (
         <div className="stack">
+          <StreakBadge userId={userId} />
           {METRICS.map((m) => (
             <TrendRow key={m.key} attempts={attempts} metric={m} />
           ))}
